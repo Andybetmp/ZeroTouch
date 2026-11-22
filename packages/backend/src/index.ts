@@ -81,7 +81,7 @@ app.post('/mcp/messages', async (req, res) => {
 });
 
 // Solo iniciar listener de puerto cuando no se ejecuta como Serverless Function en Vercel
-if (!process.env.VERCEL) {
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
     console.log(`🚀 [Bateas Zero-Touch] API REST corriendo en http://localhost:${PORT}/api/v1`);
     console.log(`🔌 [Bateas Zero-Touch] MCP Server (Streamable HTTP) en http://localhost:${PORT}/api/mcp`);

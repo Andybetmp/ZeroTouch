@@ -2,6 +2,7 @@
   "name": "bateas-zerotouch-monorepo",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "Bateas Zero-Touch — Sistema inteligente de habilitación de contratistas (React + Node.js + MCP + PostgreSQL)",
   "workspaces": [
     "packages/backend",
