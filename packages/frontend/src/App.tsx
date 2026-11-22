@@ -141,6 +141,26 @@ interface QuizQuestion {
 }
 
 export default function App() {
+  // Estado de Autenticación Corporativa (Login RBAC)
+  const [authUser, setAuthUser] = useState<{
+    username: string;
+    role: 'ADMIN_ECM' | 'SSOMA_DHO' | 'GARITA';
+    fullName: string;
+    areaLabel: string;
+    token: string;
+  } | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('bateas_auth_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [loginUsername, setLoginUsername] = useState<string>('ssoma@bateas.pe');
+  const [loginPassword, setLoginPassword] = useState<string>('Bateas2026!');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState<boolean>(false);
+
   const [activeNav, setActiveNav] = useState<NavSection>('INICIO_ACCESO_DIRECTO');
   const [afiliacionesOpen, setAfiliacionesOpen] = useState<boolean>(true);
   const [activeRoleLabel, setActiveRoleLabel] = useState<'ADMIN_ECM' | 'SSOMA_DHO' | 'GARITA'>('ADMIN_ECM');
@@ -213,6 +233,39 @@ export default function App() {
   const showNotice = (type: 'success' | 'error' | 'info', text: string) => {
     setToast({ type, text });
     setTimeout(() => setToast(null), 5500);
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+    setLoginLoading(true);
+    try {
+      const res = await fetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
+      }).then((r) => r.json());
+
+      if (res.success) {
+        setAuthUser(res.data);
+        sessionStorage.setItem('bateas_auth_user', JSON.stringify(res.data));
+        setActiveRoleLabel(res.data.role);
+        if (res.data.role === 'ADMIN_ECM') setActiveNav('AFILIACION_AFILIADOS');
+        else if (res.data.role === 'SSOMA_DHO') setActiveNav('INICIO_ACCESO_DIRECTO');
+        else if (res.data.role === 'GARITA') setActiveNav('ACCESOS_CARNET_QR');
+      } else {
+        setLoginError(res.error || 'Error de autenticación');
+      }
+    } catch (err: any) {
+      setLoginError(`No se pudo conectar con el servidor de autenticación: ${err.message}`);
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setAuthUser(null);
+    sessionStorage.removeItem('bateas_auth_user');
   };
 
   const fetchAllData = async (keepSelectionId?: string) => {
@@ -731,6 +784,122 @@ export default function App() {
     }
   };
 
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-[#1a2226] flex items-center justify-center p-4 font-sans">
+        <div className="max-w-md w-full bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+          {/* Header Corporativo Login */}
+          <div className="bg-[#222d32] p-6 text-center text-white space-y-2 border-b border-slate-700">
+            <div className="w-12 h-12 rounded-full bg-emerald-500 text-slate-950 font-black text-2xl flex items-center justify-center mx-auto shadow-md">
+              B
+            </div>
+            <h1 className="text-lg font-black tracking-wide">App Bateas v2.1.0 · Zero-Touch</h1>
+            <p className="text-xs text-slate-300">
+              Sistema de Recursos Humanos y Habilitación Inteligente de Contratistas — Minera Bateas S.A.C.
+            </p>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className="p-6 space-y-4 text-xs">
+            {loginError && (
+              <div className="p-3 rounded bg-rose-50 border border-rose-300 text-rose-800 font-semibold">
+                {loginError}
+              </div>
+            )}
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">Correo / Usuario Corporativo</label>
+              <input
+                type="email"
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                placeholder="usuario@bateas.pe"
+                className="w-full border border-slate-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-emerald-600"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 mb-1">Contraseña de Acceso</label>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="••••••••••••"
+                className="w-full border border-slate-300 rounded-lg px-3.5 py-2.5 text-sm focus:outline-none focus:border-emerald-600"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loginLoading}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-lg shadow transition cursor-pointer disabled:opacity-50"
+            >
+              {loginLoading ? 'Verificando credenciales...' : 'Ingresar a la Plataforma'}
+            </button>
+
+            {/* Selector Rápido de Perfiles de Prueba para el Cliente / Jurado */}
+            <div className="pt-4 border-t border-slate-200 space-y-2">
+              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">
+                Accesos Rápidos de Demostración (1-Clic)
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('ecm@bateas.pe');
+                    setLoginPassword('Bateas2026!');
+                  }}
+                  className={`p-2 rounded border text-center transition cursor-pointer ${
+                    loginUsername === 'ecm@bateas.pe'
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  👷 Admin ECM
+                  <span className="block text-[10px] text-slate-400 font-normal">ecm@bateas.pe</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('ssoma@bateas.pe');
+                    setLoginPassword('Bateas2026!');
+                  }}
+                  className={`p-2 rounded border text-center transition cursor-pointer ${
+                    loginUsername === 'ssoma@bateas.pe'
+                      ? 'bg-amber-50 border-amber-500 text-amber-900 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  🛡️ SSOMA / DHO
+                  <span className="block text-[10px] text-slate-400 font-normal">ssoma@bateas.pe</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('garita@bateas.pe');
+                    setLoginPassword('Bateas2026!');
+                  }}
+                  className={`p-2 rounded border text-center transition cursor-pointer ${
+                    loginUsername === 'garita@bateas.pe'
+                      ? 'bg-sky-50 border-sky-500 text-sky-900 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  🚧 Garita QR
+                  <span className="block text-[10px] text-slate-400 font-normal">garita@bateas.pe</span>
+                </button>
+              </div>
+              <p className="text-[11px] text-center text-slate-400">
+                Contraseña de prueba: <strong>Bateas2026!</strong>
+              </p>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex bg-[#f0f3f7] text-slate-800 font-sans">
       {/* ==========================================================================
@@ -986,6 +1155,16 @@ export default function App() {
                 className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5" /> Copiloto Gemini IA
+              </button>
+              <span className="hidden md:inline font-semibold text-slate-700 ml-1">
+                {authUser?.fullName}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                title="Cerrar sesión"
+              >
+                <LogOut className="w-3.5 h-3.5" /> Salir
               </button>
             </div>
           </div>

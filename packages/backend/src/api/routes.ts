@@ -13,6 +13,59 @@ import { analyzeDocumentWithGeminiAi, askBateasAiCopilot } from '../services/ai.
 
 export const apiRouter = Router();
 
+// Cuentas corporativas autorizadas para demostración y pruebas del cliente (RBAC)
+const DEMO_USERS = [
+  {
+    username: 'ecm@bateas.pe',
+    password: process.env.DEMO_PASSWORD_ECM || 'Bateas2026!',
+    role: 'ADMIN_ECM',
+    fullName: 'Ing. Roberto Salazar (Admin ECM)',
+    areaLabel: 'Empresa Contratista Minera (ECM)',
+  },
+  {
+    username: 'ssoma@bateas.pe',
+    password: process.env.DEMO_PASSWORD_SSOMA || 'Bateas2026!',
+    role: 'SSOMA_DHO',
+    fullName: 'Esp. Víctor Cayata (DHO / SSOMA)',
+    areaLabel: 'Auditoría Interna Minera Bateas (SSOMA / Médico / DHO)',
+  },
+  {
+    username: 'garita@bateas.pe',
+    password: process.env.DEMO_PASSWORD_GARITA || 'Bateas2026!',
+    role: 'GARITA',
+    fullName: 'Sup. Control Patrimonial Garita',
+    areaLabel: 'Control de Accesos y Fotocheck PVC',
+  },
+];
+
+apiRouter.post('/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const found = DEMO_USERS.find(
+    (u) =>
+      u.username.toLowerCase() === String(username || '').trim().toLowerCase() &&
+      u.password === String(password || '').trim()
+  );
+
+  if (!found) {
+    res.status(401).json({
+      success: false,
+      error: 'Credenciales inválidas. Verifique su correo corporativo y contraseña.',
+    });
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: {
+      username: found.username,
+      role: found.role,
+      fullName: found.fullName,
+      areaLabel: found.areaLabel,
+      token: Buffer.from(`${found.username}:${found.role}:${Date.now()}`).toString('base64'),
+    },
+  });
+});
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
