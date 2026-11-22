@@ -12,6 +12,7 @@
     "dev:frontend": "npm --workspace=packages/frontend run dev",
     "build:backend": "npm --workspace=packages/backend run build",
     "build:frontend": "npm --workspace=packages/frontend run build",
+    "vercel-build": "npm --workspace=packages/backend run db:generate && npm --workspace=packages/backend run build && npm --workspace=packages/frontend run build",
     "db:push": "npm --workspace=packages/backend run db:push",
     "db:seed": "npm --workspace=packages/backend run db:seed",
     "mcp:start": "npm --workspace=packages/backend run mcp"
