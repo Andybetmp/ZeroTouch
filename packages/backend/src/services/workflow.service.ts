@@ -7,6 +7,7 @@ import {
   generateSyntheticPdfBuffer,
   parseFlexibleDate,
 } from './ocr.service.js';
+import { analyzeDocumentWithGeminiAi } from './ai.service.js';
 import { evaluateDocumentRules } from './rules.service.js';
 import { recalculateWorkerTrafficLight } from './trafficLight.service.js';
 
@@ -167,6 +168,50 @@ export async function processWorkerDocumentWorkflow(params: {
     detectedDni,
     detectedExpiryDate,
   });
+
+  // Fallback Inteligente con Google Gemini IA cuando el regex/OCR tradicional no halló fecha o DNI
+  if (
+    process.env.GEMINI_API_KEY &&
+    ((workerDoc.requirement.requiresValidity && !detectedExpiryDate) || !detectedDni)
+  ) {
+    try {
+      const aiResult = await analyzeDocumentWithGeminiAi({
+        requirementName: workerDoc.requirement.name,
+        expectedWorkerDni: workerDoc.worker.dni,
+        expectedWorkerName: workerDoc.worker.fullName,
+        requiresValidity: workerDoc.requirement.requiresValidity,
+        extractedText,
+        fileBuffer: params.fileBuffer,
+        mimeType: params.mimeType,
+      });
+
+      if (aiResult.detectedDni && !detectedDni) {
+        detectedDni = aiResult.detectedDni;
+      }
+      if (aiResult.detectedExpiryDate && !detectedExpiryDate) {
+        const parsedAiDate = parseFlexibleDate(aiResult.detectedExpiryDate);
+        if (parsedAiDate) {
+          detectedExpiryDate = parsedAiDate;
+        }
+      }
+
+      const reEval = evaluateDocumentRules({
+        workerDni: workerDoc.worker.dni,
+        requiresValidity: workerDoc.requirement.requiresValidity,
+        extractedText: extractedText.length >= 20 ? extractedText : aiResult.summaryReason,
+        ocrConfidence: Math.max(ocrConfidence, aiResult.confidence),
+        detectedDni,
+        detectedExpiryDate,
+      });
+
+      ruleEval.status = reEval.status;
+      ruleEval.statusReason = `[Gemini IA ${aiResult.modelUsed}] ${reEval.statusReason}`;
+      ruleEval.shouldCreateException = reEval.shouldCreateException;
+      ruleEval.exceptionReason = reEval.exceptionReason;
+    } catch {
+      // Si Gemini no pudo resolverlo o el documento sigue incompleto, conserva clasificación ÁMBAR original
+    }
+  }
 
   // Cerrar tickets de excepción abiertos previos sobre este mismo documento al subir nueva versión
   await prisma.exceptionReview.updateMany({

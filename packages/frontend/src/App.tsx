@@ -188,6 +188,23 @@ export default function App() {
   // Modal de inspección de texto OCR
   const [inspectedDoc, setInspectedDoc] = useState<WorkerDocument | null>(null);
 
+  // Estado del Copiloto IA (Gemini + MCP Context)
+  const [showCopilot, setShowCopilot] = useState<boolean>(false);
+  const [copilotInput, setCopilotInput] = useState<string>('');
+  const [copilotLoading, setCopilotLoading] = useState<boolean>(false);
+  const [copilotMessages, setCopilotMessages] = useState<
+    { role: 'user' | 'ai'; text: string; model?: string }[]
+  >([
+    {
+      role: 'ai',
+      text: '¡Hola! Soy el Copiloto IA de Bateas Zero-Touch conectado a Supabase PostgreSQL y al Servidor MCP. Puedes preguntarme por el estado del Semáforo de cualquier trabajador, documentos en Bandeja de Excepciones o alertas de Lista Negra.',
+      model: 'gemini-3.1-flash-lite',
+    },
+  ]);
+  const [aiAuditSuggestion, setAiAuditSuggestion] = useState<{
+    [docId: string]: { summaryReason: string; detectedExpiryDate: string | null; modelUsed: string };
+  }>({});
+
   const showNotice = (type: 'success' | 'error' | 'info', text: string) => {
     setToast({ type, text });
     setTimeout(() => setToast(null), 5500);
@@ -479,6 +496,71 @@ export default function App() {
       if (res.success) {
         await fetchAllData(selectedWorker?.id);
         showNotice('success', `Orden de Fotocheck físico en PVC actualizada a ${pvcPrintStatus}.`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAskCopilot = async (customQuestion?: string) => {
+    const q = (customQuestion ?? copilotInput).trim();
+    if (!q) return;
+    setCopilotMessages((prev) => [...prev, { role: 'user', text: q }]);
+    if (!customQuestion) setCopilotInput('');
+    setCopilotLoading(true);
+    try {
+      const res = await fetch('/api/v1/ai/copilot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q }),
+      }).then((r) => r.json());
+
+      if (res.success) {
+        setCopilotMessages((prev) => [
+          ...prev,
+          { role: 'ai', text: res.data.answer, model: res.data.modelUsed },
+        ]);
+      } else {
+        setCopilotMessages((prev) => [
+          ...prev,
+          { role: 'ai', text: `Error IA: ${res.error}` },
+        ]);
+      }
+    } catch (err: any) {
+      setCopilotMessages((prev) => [
+        ...prev,
+        { role: 'ai', text: `Error de red con Copiloto IA: ${err.message}` },
+      ]);
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  const handleRunGeminiDocAudit = async (docId: string, exceptionId?: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/ai/audit-document/${docId}`, {
+        method: 'POST',
+      }).then((r) => r.json());
+
+      if (res.success) {
+        setAiAuditSuggestion((prev) => ({
+          ...prev,
+          [docId]: res.data,
+        }));
+        if (exceptionId) {
+          setResolveForm((prev) => ({
+            ...prev,
+            [exceptionId]: {
+              reviewerName: prev[exceptionId]?.reviewerName || 'Auditor Asistido por Gemini IA',
+              comment: `[Dictamen IA ${res.data.modelUsed}]: ${res.data.summaryReason}`,
+              manualDate: res.data.detectedExpiryDate || prev[exceptionId]?.manualDate || '31/12/2026',
+            },
+          }));
+        }
+        showNotice('success', `Auditoría Gemini IA (${res.data.modelUsed}) completada.`);
+      } else {
+        showNotice('error', res.error);
       }
     } finally {
       setLoading(false);
@@ -790,8 +872,12 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2 text-xs text-slate-600 border-l border-slate-200 pl-4">
-              <UserCircle2 className="w-5 h-5 text-slate-400" />
-              <span className="font-semibold">MINERA BATEAS · EQUIPO MYOPIA</span>
+              <button
+                onClick={() => setShowCopilot(!showCopilot)}
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Copiloto Gemini IA
+              </button>
             </div>
           </div>
         </header>
@@ -1631,9 +1717,29 @@ export default function App() {
                         {renderTrafficPill('AMBAR', 'md')}
                       </div>
 
-                      <div className="p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-950">
-                        <strong>Anomalía detectada por el Motor OCR:</strong> {activeException.reasonTriggered}
+                      <div className="p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <strong>Anomalía detectada por el Motor OCR:</strong> {activeException.reasonTriggered}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() =>
+                            handleRunGeminiDocAudit(activeException.workerDocument.id, activeException.id)
+                          }
+                          className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                        >
+                          <Sparkles className="w-3 h-3" /> Analizar con Gemini IA
+                        </button>
                       </div>
+                      {aiAuditSuggestion[activeException.workerDocument.id] && (
+                        <div className="p-3 rounded bg-indigo-50 border border-indigo-200 text-xs text-indigo-950">
+                          <strong>
+                            🤖 Dictamen Gemini ({aiAuditSuggestion[activeException.workerDocument.id].modelUsed}):
+                          </strong>{' '}
+                          {aiAuditSuggestion[activeException.workerDocument.id].summaryReason}
+                        </div>
+                      )}
 
                       {/* Visor del Contenido Extraído por OCR */}
                       <div>
@@ -2227,6 +2333,96 @@ export default function App() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* ==========================================================================
+          PANEL LATERAL FLOTANTE: COPILOTO IA GEMINI + CONTEXTO SUPABASE / MCP
+      ========================================================================== */}
+      {showCopilot && (
+        <div className="fixed right-4 bottom-4 w-96 bg-white rounded-xl border-2 border-indigo-500 shadow-2xl z-50 flex flex-col overflow-hidden">
+          <div className="px-4 py-3 bg-gradient-to-r from-indigo-700 to-violet-700 text-white flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-amber-300" />
+              <div>
+                <h3 className="text-xs font-black">Copiloto IA — Bateas Zero-Touch</h3>
+                <p className="text-[10px] text-indigo-200">Google Gemini + Supabase PostgreSQL en vivo</p>
+              </div>
+            </div>
+            <button onClick={() => setShowCopilot(false)} className="text-indigo-200 hover:text-white cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Sugerencias rápidas */}
+          <div className="p-2 bg-indigo-50 border-b border-indigo-100 flex flex-wrap gap-1">
+            <button
+              onClick={() => handleAskCopilot('Resume el estado actual del Semáforo Operativo y qué trabajadores requieren atención urgente.')}
+              className="text-[10px] bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-1 rounded font-semibold cursor-pointer"
+            >
+              📊 Resumen del Semáforo
+            </button>
+            <button
+              onClick={() => handleAskCopilot('¿Qué casos están pendientes en la Bandeja de Excepciones y qué recomiendas hacer?')}
+              className="text-[10px] bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-1 rounded font-semibold cursor-pointer"
+            >
+              🟡 Analizar Excepciones
+            </button>
+            <button
+              onClick={() => handleAskCopilot('¿Quiénes están listos con Carné QR para ingresar a mina?')}
+              className="text-[10px] bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-1 rounded font-semibold cursor-pointer"
+            >
+              🟢 Habilitados QR
+            </button>
+          </div>
+
+          {/* Historial de mensajes */}
+          <div className="p-3 space-y-2.5 max-h-80 overflow-y-auto bg-slate-50 text-xs">
+            {copilotMessages.map((m, i) => (
+              <div
+                key={i}
+                className={`p-2.5 rounded-lg ${
+                  m.role === 'user'
+                    ? 'bg-indigo-600 text-white ml-6'
+                    : 'bg-white border border-slate-200 text-slate-800 mr-4 shadow-2xs'
+                }`}
+              >
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+                {m.model && (
+                  <span className="block text-[9px] text-slate-400 mt-1 font-semibold">Modelo: {m.model}</span>
+                )}
+              </div>
+            ))}
+            {copilotLoading && (
+              <div className="p-2.5 rounded-lg bg-white border border-slate-200 text-slate-500 text-xs animate-pulse">
+                Consultando expedientes en Supabase con Gemini IA...
+              </div>
+            )}
+          </div>
+
+          {/* Input de pregunta */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAskCopilot();
+            }}
+            className="p-2.5 bg-white border-t border-slate-200 flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={copilotInput}
+              onChange={(e) => setCopilotInput(e.target.value)}
+              placeholder="Pregunta sobre trabajadores, OCR o excepciones..."
+              className="flex-1 border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+            />
+            <button
+              type="submit"
+              disabled={copilotLoading}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded cursor-pointer"
+            >
+              Enviar
+            </button>
+          </form>
         </div>
       )}
 

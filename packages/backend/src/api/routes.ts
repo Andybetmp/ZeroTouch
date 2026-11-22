@@ -8,6 +8,7 @@ import {
   resolveExceptionTicketWorkflow,
   submitElearningAttemptWorkflow,
 } from '../services/workflow.service.js';
+import { analyzeDocumentWithGeminiAi, askBateasAiCopilot } from '../services/ai.service.js';
 
 export const apiRouter = Router();
 
@@ -315,5 +316,45 @@ apiRouter.patch('/badges/:badgeId/pvc-status', async (req, res) => {
     res.json({ success: true, data: badge });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// 8. Copiloto IA & Auditoría Multimodal con Google Gemini
+apiRouter.post('/ai/copilot', async (req, res) => {
+  try {
+    const { question } = req.body;
+    if (!question || !String(question).trim()) {
+      res.status(400).json({ success: false, error: 'Escribe una consulta para el Copiloto IA.' });
+      return;
+    }
+    const result = await askBateasAiCopilot(String(question));
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/ai/audit-document/:workerDocumentId', async (req, res) => {
+  try {
+    const doc = await prisma.workerDocument.findUnique({
+      where: { id: req.params.workerDocumentId },
+      include: { worker: true, requirement: true },
+    });
+    if (!doc) {
+      res.status(404).json({ success: false, error: 'Documento no encontrado' });
+      return;
+    }
+    const aiResult = await analyzeDocumentWithGeminiAi({
+      requirementName: doc.requirement.name,
+      expectedWorkerDni: doc.worker.dni,
+      expectedWorkerName: doc.worker.fullName,
+      requiresValidity: doc.requirement.requiresValidity,
+      extractedText: doc.extractedText,
+      fileBuffer: doc.fileData ? Buffer.from(doc.fileData) : null,
+      mimeType: doc.fileMimeType,
+    });
+    res.json({ success: true, data: aiResult });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
