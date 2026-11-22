@@ -1,49 +1,50 @@
-# Spec 05 — Especificación Frontend React y Carné Digital QR (SDD)
+# Spec 05 — Especificación Frontend Web Corporativo React (App Bateas v2.1.0) y Carné Digital QR (SDD)
 
-## 1. Arquitectura Visual y Experiencia de Usuario
+## 1. Arquitectura Visual Web Desktop (Look & Feel Oficial App Bateas v2.1.0)
 
-El frontend en **React 19 + TypeScript + Tailwind CSS + Lucide Icons** emula la identidad visual corporativa de **App Bateas v2.1.0** (mostrada en el Entregable 3, Figuras 2 y 3) con una barra lateral oscura y tarjetas de estado de alto contraste para el **Semáforo Operativo**.
+El frontend en **React 19 + TypeScript + Tailwind CSS + Lucide Icons** es una **Aplicación Web Corporativa (Desktop-first)** que replica fielmente la interfaz real del **Sistema de Recursos Humanos — App Bateas v2.1.0** documentada en los Entregables 2 y 3:
 
-La aplicación cuenta con un selector rápido de vista en el encabezado para alternar durante las demostraciones entre los **3 roles clave**:
-1. **👷 Portal Empresa Contratista (ECM) / Trabajador**
-2. **🛡️ Portal Interno Minera Bateas (SSOMA / Área Médica / DHO — Bandeja de Excepciones)**
-3. **🚧 Control de Garita (Verificador QR y Cola de Impresión Fotocheck PVC)**
+1. **Barra Lateral Izquierda Fija (`#232d3b`)**:
+   - Cabecera con logo `App Bateas` y navegación jerárquica de módulos:
+     - `🏠 Inicio (Acceso directo / Panel de Control)`
+     - `📋 Afiliaciones` → `Afiliados y Carga OCR (ECM)`, `Bandeja de Excepciones (SSOMA/Médico/DHO)`, `Capacitaciones Web (E-Learning)`, `Documentos por estadía`, `Lista negra`
+     - `🛡️ Control de accesos` → `Carné Digital QR y Cola Fotocheck PVC (Garita)`
+2. **Barra Superior Blanca (`Top Header`)**:
+   - Enlaces `Inicio | Salir`, selector rápido de Rol de Simulación (`Administrador ECM / Contratista`, `Especialista SSOMA / Médico / DHO`, `Control Garita`) y perfil del usuario conectado.
+3. **Área de Trabajo Principal con Breadcrumbs**:
+   - Encabezado `Sistema de Recursos Humanos` o título del módulo con ruta de navegación (`Inicio / Afiliación / ...`).
 
 ---
 
-## 2. Especificación de Pantallas y Componentes
+## 2. Especificación de Módulos Web
 
-### 2.1. Vista 1: Portal Empresa Contratista (ECM) y Trabajador
-- **Generador Rápido de Escenarios Demo (1-Click)**:
-  - Botones para crear casos completos con PDFs reales analizados por el motor OCR:
-    1. *Caso Zero-Touch (`VERDE`)*: Todos los documentos vigentes y legibles → pre-aprobación automática sin humanos.
-    2. *Caso con Excepción (`ÁMBAR`)*: SCTR vigente pero EMO sin fecha legible → envía solo el EMO a la Bandeja de Excepciones del Área Médica.
-    3. *Caso Documento Vencido (`ROJO`)*: SCTR con fecha vencida → bloqueo automático.
-    4. *Caso Lista Negra (`ROJO`)*: DNI con restricción en Lista Negra → bloqueo inmediato en registro.
-- **Módulo de Registro y Checklist Dinámico**:
-  - Formulario con DNI (8 dígitos), Nombre completo, ECM, Puesto (`Operario`, `Conductor`, `Ingeniero`, `Personal de cocina`), Estadía (`PERMANENTE CIA`) y Zona (`Superficie`, `Socavón`).
-  - Muestra la tabla de requisitos con las etiquetas reales de App Bateas: badge `¿Es obligatorio?: Sí/No` y badge `¿Requiere vigencia?: Sí/No`.
-- **Tarjetas de Carga Documental con OCR Instantáneo**:
-  - Al subir un PDF o imagen, se ejecuta el análisis OCR automáticamente sin requerir un segundo botón manual.
-  - Muestra: Estado (`🟢 VERDE`, `🟡 ÁMBAR`, `🔴 ROJO`), Fecha de vencimiento extraída, DNI detectado, Método (`Texto PDF` o `Tesseract OCR`), Confianza `%` y acordeón para inspeccionar el texto extraído.
-  - **Reemplazo sin reinicio**: Si un documento queda en `ROJO`, la ECM puede subir el archivo corregido y solo se re-evalúa ese requisito, manteniendo intactos los demás documentos en `VERDE`.
-- **Aula Móvil E-Learning Asíncrono 24/7**:
-  - Tarjetas interactivas de lectura (*Seguridad General* y *Medio Ambiente*) + Cuestionario de 4 preguntas aleatorias con calificación inmediata y emisión de certificado.
+### 2.1. Módulo 1: Inicio — Acceso Directo y Panel de Control
+- **Pestaña "Acceso directo"** (Réplica de Entregable 3, Figura 2):
+  - Grid de tarjetas ilustradas con borde destacado para los módulos intervenidos por **Bateas Zero-Touch**:
+    - **Afiliación (Borde Verde Zero-Touch)**: *"Revise el estado de su afiliación, adjunte sus documentos para pre-validación OCR, revise el Semáforo Operativo."*
+    - **Capacitaciones E-Learning (Borde Índigo)**: *"Complete sus inducciones teóricas obligatorias 24/7 y rinda su evaluación web."*
+    - **Bandeja de Excepciones SSOMA/DHO (Borde Ámbar)**: *"Audite únicamente el ~20% de documentos observados o con incertidumbre OCR."*
+    - **Reservas de Viaje y Carné Digital QR (Borde Azul)**: *"Verifique su habilitación en Semáforo Verde, visualice su Carné Digital QR y orden de Fotocheck PVC."*
+- **Pestaña "Panel de control"** (Réplica de Entregable 2, Figura 2):
+  - Gráfico comparativo de Barras por Empresa Contratista (ECM) y Gráficos de Dona (**Situación Diagnóstico AS-IS: 3,152 vencidos / 87.9%** vs. **Situación Tiempo Real TO-BE en Supabase PostgreSQL**).
 
-### 2.2. Vista 2: Portal Revisor Minera Bateas (Gestión por Excepciones)
-- **Dashboard Semáforo Operativo**:
-  - Indicadores KPI superiores: Total Expedientes, `🟢 Habilitados Zero-Touch`, `🟡 En Bandeja de Excepciones`, `🔴 Bloqueados (Vencidos / Lista Negra)`, y `% Ahorro de Carga Manual`.
-  - Tabla maestra filtrable por Semáforo (`VERDE`, `ÁMBAR`, `ROJO`), Empresa Contratista y Puesto.
-- **Bandeja de Excepciones (`ExceptionTray`)**:
-  - Filtro por área responsable: `SSOMA`, `Área Médica`, `DHO`, `Área Usuaria`.
-  - **Regla de Oro Zero-Touch**: Aquí **no** aparecen los documentos `VERDE`. Solo aparecen los tickets `OPEN` cuyos documentos cayeron en `ÁMBAR` (por baja legibilidad, fecha ambigua o discrepancia de DNI).
-  - El revisor visualiza el texto extraído/archivo, puede ingresar la fecha de vigencia verificada manualmente y pulsar **Aprobar Excepción (Pasa a `VERDE`)** o **Rechazar con Observación (Pasa a `ROJO`)**.
-- **Administrador de Maestros (App Bateas v2.1.0)**:
-  - Vista de la tabla `Documentos por estadía` (réplica de la Figura 3 del Entregable 3) y gestión de la tabla `Lista Negra`.
+### 2.2. Módulo 2: Afiliación, Carga OCR y Semáforo Operativo (Vista Web ECM)
+- **Layout Web de 2 Columnas (Master-Detail)**:
+  - Columna izquierda: Lista de trabajadores afiliados con filtro por Semáforo (`🟢 VERDE`, `🟡 ÁMBAR`, `🔴 ROJO`), buscador por DNI/Nombre, botón `+ Nuevo Afiliado` y barra de simulación rápida de los 4 casos OCR.
+  - Columna derecha: Ficha integral del expediente seleccionado, Semáforo Operativo, tabla de requisitos con las banderas `¿Es obligatorio?` y `¿Requiere vigencia?`, subida de PDF/Imagen con lectura OCR instantánea e historial de auditoría.
 
-### 2.3. Vista 3: Carné Digital QR y Cola de Fotocheck PVC en Garita
-- **Tarjeta de Carné Digital (`DigitalBadgeCard`)**:
-  - Se desbloquea automáticamente en cuanto el Semáforo Global alcanza `🟢 VERDE`.
-  - Renderiza un código QR real (SVG/Canvas) que codifica el JSON firmado (`badgeCode`, `dni`, `fullName`, `companyName`, `jobPosition`, `accessZone`, `validUntil`, `signatureHash`).
-- **Cola de Impresión Física en PVC (Protocolo de Garita)**:
-  - Cumpliendo el requisito validado con DHO en los Entregables 2 y 3 (los trabajadores usan guantes de seguridad en campo y requieren su credencial física en PVC además del QR digital), muestra el estado de impresión física (`En cola de Garita` → botón `Imprimir y Entregar Fotocheck PVC`).
+### 2.3. Módulo 3: Bandeja de Excepciones Split-Screen (SSOMA / Área Médica / DHO)
+- **Layout Web Split-Screen (Pantalla Dividida)**:
+  - Panel izquierdo: Cola de tickets `OPEN` en estado `ÁMBAR` filtrables por área (`SSOMA`, `AREA_MEDICA`, `DHO`, `AREA_USUARIA`).
+  - Panel derecho (Inspector Documental): Muestra lado a lado el **Visor del Documento / Texto Extraído por OCR** y el **Formulario de Dictamen Técnico**, permitiendo corregir manualmente la fecha de vencimiento y aprobar (`VERDE`) o rechazar (`ROJO`) sin reiniciar el resto del expediente.
+
+### 2.4. Módulo 4: Documentos por Estadía y Lista Negra (Maestros App Bateas v2.1.0)
+- **Tabla Maestra `Documentos por estadía`** (Réplica exacta de Entregable 3, Figura 3):
+  - Columnas `#`, `Tipo de Estadía`, `Descripción`, `Perfil`, `¿Es obligatorio?` (badge `Sí` verde / `No` ámbar), `¿Requiere vigencia?` (badge `Sí` verde / `No` ámbar), `Área Responsable` y botones de acción.
+- **Tabla `Lista negra`**:
+  - Buscador y formulario para registrar DNIs con restricción activa en unidad minera.
+
+### 2.5. Módulo 5: Aula Web E-Learning Asíncrona y Carné Digital QR / Garita PVC
+- **Aula Web E-Learning**: Vista web estructurada con módulos de *Seguridad General* y *Medio Ambiente* y examen de certificación en línea.
+- **Control de Garita y Carné Digital QR**: Vista web de tarjetas de credenciales habilitadas (`Semáforo VERDE`) con código QR verificable y gestión de cola de impresión de **Fotocheck físico en PVC**.
+
