@@ -8,6 +8,7 @@ import {
   resolveExceptionTicketWorkflow,
   submitElearningAttemptWorkflow,
 } from '../services/workflow.service.js';
+import { verifyGaritaBadgeOrDni } from '../services/trafficLight.service.js';
 
 export function createBateasMcpServer(): McpServer {
   const server = new McpServer({
@@ -342,7 +343,30 @@ export function createBateasMcpServer(): McpServer {
     }
   );
 
-  // TOOL 7: generate_demo_scenario
+  // TOOL 7: verify_garita_qr (Spec 04)
+  server.tool(
+    'verify_garita_qr',
+    'Verifica en tiempo real en Garita de Seguridad el código QR del Carné Digital o el DNI de un trabajador (comprobando firma criptográfica HMAC-SHA256, Semáforo VERDE, vigencias y estado de Fotocheck físico PVC).',
+    {
+      badgeCodeOrDni: z
+        .string()
+        .min(4)
+        .describe('Código del Carné QR (ej. BZT-72458910-...) o DNI de 8 dígitos del trabajador'),
+    },
+    async ({ badgeCodeOrDni }) => {
+      const verification = await verifyGaritaBadgeOrDni(badgeCodeOrDni);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(verification, null, 2),
+          },
+        ],
+      };
+    }
+  );
+
+  // TOOL 8: generate_demo_scenario
   server.tool(
     'generate_demo_scenario',
     'Genera un expediente demostrativo completo con PDFs sintéticos analizados por el motor OCR para cualquiera de los 4 escenarios (ZERO_TOUCH_GREEN, EXCEPTION_AMBER, EXPIRED_RED, BLACKLISTED_RED).',

@@ -170,3 +170,109 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
     },
   });
 }
+
+/**
+ * Verifica criptográficamente un Carné Digital QR o DNI en Garita (Spec 04 y Spec 05).
+ * Comprueba:
+ * 1. Existencia del trabajador y su credencial QR.
+ * 2. Firma HMAC-SHA256 del payload QR (integridad anti-falsificación).
+ * 3. Que el Semáforo Global esté actualmente en VERDE y no esté en Lista Negra.
+ * 4. Que ningún documento obligatorio haya vencido al día de hoy y alerta si vence en <= 20 días.
+ */
+export async function verifyGaritaBadgeOrDni(badgeCodeOrDni: string) {
+  const clean = badgeCodeOrDni.trim();
+  const badge = await prisma.digitalBadgeQr.findFirst({
+    where: {
+      OR: [{ badgeCode: clean }, { worker: { dni: clean } }],
+    },
+    include: {
+      worker: {
+        include: {
+          contractor: true,
+          documents: { include: { requirement: true } },
+        },
+      },
+    },
+  });
+
+  if (!badge) {
+    const workerOnly = await prisma.worker.findUnique({
+      where: { dni: clean },
+      include: { contractor: true },
+    });
+
+    return {
+      accessGranted: false,
+      verificationStatus: 'DENIED_NO_BADGE',
+      reason: workerOnly
+        ? `ACCESO DENEGADO EN GARITA: El trabajador ${workerOnly.fullName} (DNI ${workerOnly.dni}) tiene Semáforo en ${workerOnly.trafficLight} (${workerOnly.statusSummary}) y no posee Carné QR habilitado.`
+        : `ACCESO DENEGADO EN GARITA: No existe credencial QR ni trabajador afiliado con el código/DNI "${clean}".`,
+      signatureValid: false,
+      worker: workerOnly || null,
+      badge: null,
+      expiringSoonDocs: [],
+    };
+  }
+
+  const secret = process.env.QR_SIGNING_SECRET || 'bateas-zerotouch-myopia-2026';
+  const expectedSig = crypto
+    .createHmac('sha256', secret)
+    .update(badge.qrPayloadJson)
+    .digest('hex');
+  const signatureValid = expectedSig === badge.signatureHash;
+
+  const now = new Date();
+  const in20Days = new Date(now.getTime() + 20 * 24 * 60 * 60 * 1000);
+
+  const expiringSoonDocs = badge.worker.documents
+    .filter(
+      (d) =>
+        d.detectedExpiryDate &&
+        d.detectedExpiryDate.getTime() >= now.getTime() &&
+        d.detectedExpiryDate.getTime() <= in20Days.getTime()
+    )
+    .map((d) => ({
+      name: d.requirement.name,
+      expiryDate: d.detectedExpiryDate?.toISOString().split('T')[0],
+    }));
+
+  const isExpired = badge.validUntil.getTime() < now.getTime();
+  const isGreen = badge.worker.trafficLight === 'VERDE' && !badge.worker.isBlacklisted;
+  const accessGranted = signatureValid && isGreen && !isExpired;
+
+  return {
+    accessGranted,
+    verificationStatus: accessGranted ? 'ACCESS_GRANTED_GARITA' : 'ACCESS_REVOKED_OR_INVALID',
+    reason: accessGranted
+      ? `ACCESO AUTORIZADO EN GARITA: Firma HMAC-SHA256 válida, Semáforo VERDE y documentos vigentes hasta ${
+          badge.validUntil.toISOString().split('T')[0]
+        }. Fotocheck PVC: ${badge.pvcPrintStatus}.`
+      : `ACCESO BLOQUEADO EN GARITA: ${
+          !signatureValid
+            ? 'Firma criptográfica QR inválida.'
+            : isExpired
+            ? 'Credencial vencida.'
+            : `Semáforo actual en ${badge.worker.trafficLight}.`
+        }`,
+    signatureValid,
+    pvcPrintStatus: badge.pvcPrintStatus,
+    validUntil: badge.validUntil.toISOString().split('T')[0],
+    expiringSoonDocs,
+    worker: {
+      id: badge.worker.id,
+      dni: badge.worker.dni,
+      fullName: badge.worker.fullName,
+      companyName: badge.worker.contractor.companyName,
+      jobPosition: badge.worker.jobPosition,
+      stayType: badge.worker.stayType,
+      accessZone: badge.worker.accessZone,
+      trafficLight: badge.worker.trafficLight,
+    },
+    badge: {
+      id: badge.id,
+      badgeCode: badge.badgeCode,
+      signatureHash: badge.signatureHash,
+      pvcPrintStatus: badge.pvcPrintStatus,
+    },
+  };
+}

@@ -184,6 +184,11 @@ export default function App() {
   // Estado E-Learning Web
   const [materialRead, setMaterialRead] = useState<boolean>(false);
   const [quizAnswers, setQuizAnswers] = useState<{ [qId: string]: number }>({});
+  const [sessionCodeInput, setSessionCodeInput] = useState<string>('');
+
+  // Estado Escáner Verificador QR en Garita (Fase 4)
+  const [garitaVerifyCode, setGaritaVerifyCode] = useState<string>('');
+  const [garitaVerifyResult, setGaritaVerifyResult] = useState<any>(null);
 
   // Modal de inspección de texto OCR
   const [inspectedDoc, setInspectedDoc] = useState<WorkerDocument | null>(null);
@@ -565,6 +570,110 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerifyGaritaQr = async (codeToVerify?: string) => {
+    const code = (codeToVerify ?? garitaVerifyCode).trim();
+    if (!code) {
+      showNotice('error', 'Ingresa un Código de Carné QR o DNI de 8 dígitos para verificar en garita.');
+      return;
+    }
+    if (codeToVerify) setGaritaVerifyCode(codeToVerify);
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/v1/badges/verify/${encodeURIComponent(code)}`).then((r) => r.json());
+      if (res.success) {
+        setGaritaVerifyResult(res.data);
+        if (res.data.accessGranted) {
+          showNotice('success', `GARITA: Acceso autorizado para ${res.data.worker?.fullName}.`);
+        } else {
+          showNotice('error', res.data.reason);
+        }
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleExportCsvReport = () => {
+    if (workers.length === 0) return;
+    const headers = [
+      'DNI',
+      'Trabajador',
+      'Empresa_ECM',
+      'Puesto',
+      'Estadia',
+      'Zona',
+      'Semaforo_Global',
+      'Docs_Verde',
+      'Docs_Obligatorios',
+      'ELearning_Aprobado',
+      'Codigo_Carnet_QR',
+      'Estado_Fotocheck_PVC',
+      'Diagnostico',
+    ];
+    const rows = workers.map((w) => {
+      const mandatory = w.documents.filter((d) => d.requirement.isMandatory);
+      const green = mandatory.filter((d) => d.status === 'VERDE').length;
+      return [
+        w.dni,
+        `"${w.fullName}"`,
+        `"${w.contractor.companyName}"`,
+        w.jobPosition,
+        w.stayType,
+        w.accessZone,
+        w.trafficLight,
+        green,
+        mandatory.length,
+        w.elearningPassed ? 'SI' : 'NO',
+        w.digitalBadge?.badgeCode || 'SIN_EMITIR',
+        w.digitalBadge?.pvcPrintStatus || 'N/A',
+        `"${w.statusSummary.replace(/"/g, '""')}"`,
+      ].join(',');
+    });
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `reporte_semaforo_bateas_zerotouch_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadElearningCertificate = (w: Worker) => {
+    const content = [
+      '========================================================================',
+      'MINERA BATEAS S.A.C. — PLATAFORMA BATEAS ZERO-TOUCH (EQUIPO MYOPIA)',
+      'CERTIFICADO DIGITAL DE INDUCCIÓN TEÓRICA ASÍNCRONA (E-LEARNING 24/7)',
+      '========================================================================',
+      `Trabajador Afiliado : ${w.fullName}`,
+      `DNI                 : ${w.dni}`,
+      `Empresa Contratista : ${w.contractor.companyName}`,
+      `Puesto / Estadía    : ${w.jobPosition} / ${w.stayType}`,
+      `Código de Sesión    : ${w.sessionCode}`,
+      'Módulos Aprobados   : 1. Seguridad y Salud Ocupacional (SSOMA)',
+      '                      2. Gestión Ambiental y Segregación NTP',
+      `Estado Evaluación   : APROBADO (>= 75%)`,
+      `Semáforo Operativo  : ${w.trafficLight}`,
+      `Fecha de Emisión    : ${new Date().toLocaleString('es-PE')}`,
+      '========================================================================',
+    ].join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Certificado_ELearning_${w.dni}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const isDocExpiringWithin20Days = (expiryDateStr: string | null) => {
+    if (!expiryDateStr) return false;
+    const exp = new Date(expiryDateStr).getTime();
+    const now = Date.now();
+    const in20d = now + 20 * 24 * 60 * 60 * 1000;
+    return exp >= now && exp <= in20d;
   };
 
   const renderTrafficPill = (status: TrafficLight | DocStatus, size: 'sm' | 'md' = 'sm') => {
@@ -1316,17 +1425,26 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* COLUMNA IZQUIERDA (4 cols): Padrón de Trabajadores Afiliados */}
               <div className="lg:col-span-4 bg-white rounded border border-slate-200 shadow-2xs flex flex-col">
-                <div className="p-4 border-b border-slate-200 flex items-center justify-between">
+                <div className="p-4 border-b border-slate-200 flex items-center justify-between gap-2">
                   <div>
                     <h2 className="font-bold text-sm text-slate-800">Padrón de Afiliados (ECM)</h2>
                     <p className="text-[11px] text-slate-500">Seleccione un trabajador para gestionar su expediente</p>
                   </div>
-                  <button
-                    onClick={() => setShowNewWorkerModal(true)}
-                    className="px-3 py-1.5 bg-[#28a745] hover:bg-emerald-600 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer shadow-2xs"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Nuevo
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleExportCsvReport}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold rounded flex items-center gap-1 cursor-pointer"
+                      title="Exportar padrón y Semáforo a CSV"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" /> CSV
+                    </button>
+                    <button
+                      onClick={() => setShowNewWorkerModal(true)}
+                      className="px-3 py-1.5 bg-[#28a745] hover:bg-emerald-600 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Nuevo
+                    </button>
+                  </div>
                 </div>
 
                 {/* Buscador y Filtro por Semáforo */}
@@ -1536,6 +1654,11 @@ export default function App() {
                                       {doc.detectedExpiryDate ? String(doc.detectedExpiryDate).split('T')[0] : '—'}
                                     </strong>
                                   </div>
+                                  {isDocExpiringWithin20Days(doc.detectedExpiryDate) && (
+                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
+                                      ⚠️ Próximo a vencer (&lt;20d)
+                                    </span>
+                                  )}
                                   <div className="text-slate-500">DNI leído: {doc.detectedDni || '—'}</div>
                                 </td>
                                 <td className="p-3">{renderTrafficPill(doc.status)}</td>
@@ -1600,6 +1723,40 @@ export default function App() {
                         </table>
                       </div>
                     </div>
+
+                    {/* Bitácora de Auditoría e Historial Transaccional del Expediente (Spec 02 y Spec 05) */}
+                    {selectedWorker.auditLogs && selectedWorker.auditLogs.length > 0 && (
+                      <div className="bg-white rounded border border-slate-200 shadow-2xs overflow-hidden">
+                        <div className="px-5 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                          <h3 className="font-bold text-xs text-slate-800 uppercase tracking-wider">
+                            Bitácora Inmutable de Auditoría y Eventos Zero-Touch (PostgreSQL)
+                          </h3>
+                          <span className="text-[11px] text-slate-500">
+                            {selectedWorker.auditLogs.length} evento(s) registrados
+                          </span>
+                        </div>
+                        <div className="divide-y divide-slate-100 max-h-48 overflow-y-auto text-xs">
+                          {selectedWorker.auditLogs.map((log) => (
+                            <div key={log.id} className="px-5 py-2.5 flex items-start justify-between gap-4">
+                              <div className="space-y-0.5">
+                                <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 mr-2">
+                                  {log.actorArea}
+                                </span>
+                                <strong className="text-slate-800">{log.action}:</strong>{' '}
+                                <span className="text-slate-600">{log.details}</span>
+                              </div>
+                              <span className="text-[11px] text-slate-400 shrink-0">
+                                {new Date(log.createdAt).toLocaleTimeString('es-PE', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="bg-white p-8 rounded border border-slate-200 text-center text-xs text-slate-500">
@@ -2065,9 +2222,18 @@ export default function App() {
                     ))}
                   </select>
                   {selectedWorker.elearningPassed ? (
-                    <span className="px-3 py-1.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center gap-1">
-                      <Award className="w-4 h-4" /> APROBADO (≥ 75%)
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center gap-1">
+                        <Award className="w-4 h-4" /> APROBADO (≥ 75%)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadElearningCertificate(selectedWorker)}
+                        className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold cursor-pointer"
+                      >
+                        📥 Descargar Constancia
+                      </button>
+                    </div>
                   ) : (
                     <span className="px-3 py-1.5 rounded bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold">
                       PENDIENTE DE EVALUACIÓN
@@ -2161,16 +2327,61 @@ export default function App() {
           ---------------------------------------------------------------------- */}
           {activeNav === 'ACCESOS_CARNET_QR' && (
             <div className="space-y-5">
-              <div className="bg-white p-4 rounded border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-sm font-bold text-slate-800">
-                    Emisión Automática de Carné Digital QR y Cola de Impresión de Fotocheck Físico en PVC (Garita)
-                  </h2>
-                  <p className="text-xs text-slate-500">
-                    Al alcanzar Semáforo VERDE, el sistema genera el código QR firmado y encola la impresión de la
-                    credencial física en PVC para uso con guantes en planta y socavón.
-                  </p>
+              {/* ESCÁNER Y VERIFICADOR CRIPTOGRÁFICO EN GARITA DE SEGURIDAD (Fase 4 - Spec 04 y 05) */}
+              <div className="bg-white p-5 rounded border border-slate-200 shadow-2xs space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <span className="text-[11px] font-black uppercase text-sky-700">
+                      Control de Garita · Verificación Criptográfica HMAC-SHA256 en Tiempo Real
+                    </span>
+                    <h2 className="text-base font-bold text-slate-900">
+                      Escáner / Validador de Carné Digital QR y Estado de Fotocheck PVC
+                    </h2>
+                    <p className="text-xs text-slate-500">
+                      Ingrese el código del Carné QR (o el DNI de 8 dígitos del trabajador) o pulse &ldquo;Verificar en
+                      Garita&rdquo; en cualquiera de las tarjetas inferiores para comprobar su autenticidad.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={garitaVerifyCode}
+                      onChange={(e) => setGaritaVerifyCode(e.target.value)}
+                      placeholder="Código QR (BZT-...) o DNI..."
+                      className="w-64 border border-slate-300 rounded px-3 py-2 text-xs font-bold"
+                    />
+                    <button
+                      onClick={() => handleVerifyGaritaQr()}
+                      disabled={loading}
+                      className="px-4 py-2 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded shadow-2xs cursor-pointer"
+                    >
+                      🔍 Verificar Acceso en Garita
+                    </button>
+                  </div>
                 </div>
+
+                {garitaVerifyResult && (
+                  <div
+                    className={`p-4 rounded-lg border-2 text-xs space-y-1.5 ${
+                      garitaVerifyResult.accessGranted
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
+                        : 'bg-rose-50 border-rose-400 text-rose-950'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-black text-sm">
+                        {garitaVerifyResult.accessGranted
+                          ? '✅ PASE AUTORIZADO EN GARITA DE CONTROL'
+                          : '⛔ PASE DENEGADO / BLOQUEADO EN GARITA'}
+                      </span>
+                      <span className="font-mono text-[11px] bg-white/80 px-2 py-0.5 rounded border border-slate-300">
+                        Firma HMAC-SHA256: {garitaVerifyResult.signatureValid ? 'VÁLIDA' : 'NO VÁLIDA'}
+                      </span>
+                    </div>
+                    <p className="font-semibold">{garitaVerifyResult.reason}</p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -2210,25 +2421,34 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+                        <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
                           <div className="text-xs">
                             <span className="text-[10px] font-bold uppercase text-slate-500 block">
                               Credencial Física PVC:
                             </span>
                             <span className="font-black text-slate-800">{badge.pvcPrintStatus}</span>
                           </div>
-                          {badge.pvcPrintStatus === 'QUEUED_GARITA' ? (
+                          <div className="flex items-center gap-1.5">
                             <button
-                              onClick={() => handleUpdatePvcStatus(badge.id, 'PRINTED')}
-                              className="px-3 py-1.5 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer"
+                              onClick={() => handleVerifyGaritaQr(badge.badgeCode)}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold rounded cursor-pointer"
+                              title="Simular escaneo de este QR en garita"
                             >
-                              <Printer className="w-3.5 h-3.5" /> Imprimir PVC
+                              Escanear QR
                             </button>
-                          ) : (
-                            <span className="px-2.5 py-1 rounded bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5" /> PVC Entregado
-                            </span>
-                          )}
+                            {badge.pvcPrintStatus === 'QUEUED_GARITA' ? (
+                              <button
+                                onClick={() => handleUpdatePvcStatus(badge.id, 'PRINTED')}
+                                className="px-3 py-1.5 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer"
+                              >
+                                <Printer className="w-3.5 h-3.5" /> Imprimir PVC
+                              </button>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> PVC Entregado
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

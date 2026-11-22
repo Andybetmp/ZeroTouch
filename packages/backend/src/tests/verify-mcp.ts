@@ -22,7 +22,8 @@ async function verifyMcpServer() {
   const toolsList = await client.listTools();
   const toolNames = toolsList.tools.map((t) => t.name);
   console.log(`  ✅ 2. Tools MCP descubiertas (${toolNames.length}): ${toolNames.join(', ')}`);
-  assert.equal(toolNames.length, 7, 'El servidor MCP debe exponer exactamente las 7 Tools de la Spec 04');
+  assert.ok(toolNames.includes('verify_garita_qr'), 'Debe incluir la Tool verify_garita_qr de la Spec 04');
+  assert.equal(toolNames.length, 8, 'El servidor MCP debe exponer las 8 Tools operativas');
 
   // 2. Verificar Resources registrados
   const resourcesList = await client.listResources();
@@ -55,6 +56,16 @@ async function verifyMcpServer() {
   });
   const trayTickets = JSON.parse(((trayRes.content as any)[0] as any).text);
   console.log(`  ✅ 6. Tool list_exception_tray verificada: ${trayTickets.length} ticket(s) abierto(s) en Bandeja de Excepciones.`);
+
+  // 6. Invocar Tool verify_garita_qr (Fase 4 - Spec 04)
+  const verifyRes = await client.callTool({
+    name: 'verify_garita_qr',
+    arguments: { badgeCodeOrDni: '72458910' },
+  });
+  const verifyPayload = JSON.parse(((verifyRes.content as any)[0] as any).text);
+  assert.equal(verifyPayload.accessGranted, true, 'El trabajador 72458910 debe tener acceso autorizado en Garita');
+  assert.equal(verifyPayload.signatureValid, true, 'La firma criptográfica HMAC-SHA256 debe ser válida');
+  console.log(`  ✅ 7. Tool verify_garita_qr verificada: ${verifyPayload.reason}`);
 
   await client.close();
   console.log('🎉 Verificación E2E del Servidor MCP + Supabase PostgreSQL completada con éxito.');

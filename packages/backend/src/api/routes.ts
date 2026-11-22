@@ -8,6 +8,7 @@ import {
   resolveExceptionTicketWorkflow,
   submitElearningAttemptWorkflow,
 } from '../services/workflow.service.js';
+import { verifyGaritaBadgeOrDni } from '../services/trafficLight.service.js';
 import { analyzeDocumentWithGeminiAi, askBateasAiCopilot } from '../services/ai.service.js';
 
 export const apiRouter = Router();
@@ -20,6 +21,9 @@ const upload = multer({
 // 1. Dashboard KPIs & Métricas Zero-Touch
 apiRouter.get('/dashboard/metrics', async (_req, res) => {
   try {
+    const now = new Date();
+    const in20Days = new Date(now.getTime() + 20 * 24 * 60 * 60 * 1000);
+
     const [
       totalWorkers,
       greenCount,
@@ -29,6 +33,7 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
       totalAnalyzedDocs,
       zeroTouchDocs,
       queuedPvcCount,
+      expiringSoonDocsCount,
     ] = await Promise.all([
       prisma.worker.count(),
       prisma.worker.count({ where: { trafficLight: 'VERDE' } }),
@@ -39,10 +44,18 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
       prisma.workerDocument.count({
         where: {
           status: 'VERDE',
-          statusReason: { startsWith: 'Pre-aprobado Zero-Touch' },
+          statusReason: { contains: 'Zero-Touch' },
         },
       }),
       prisma.digitalBadgeQr.count({ where: { pvcPrintStatus: 'QUEUED_GARITA' } }),
+      prisma.workerDocument.count({
+        where: {
+          detectedExpiryDate: {
+            gte: now,
+            lte: in20Days,
+          },
+        },
+      }),
     ]);
 
     res.json({
@@ -58,6 +71,7 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
         automationRatePercent:
           totalAnalyzedDocs > 0 ? Math.round((zeroTouchDocs / totalAnalyzedDocs) * 100) : 0,
         queuedPvcCount,
+        expiringSoonDocsCount,
       },
     });
   } catch (err: any) {
@@ -276,7 +290,17 @@ apiRouter.get('/elearning/questions', async (_req, res) => {
 
 apiRouter.post('/elearning/submit', async (req, res) => {
   try {
-    const { workerId, scoreObtained, totalQuestions } = req.body;
+    const { workerId, sessionCode, scoreObtained, totalQuestions } = req.body;
+    if (sessionCode) {
+      const worker = await prisma.worker.findUnique({ where: { id: workerId } });
+      if (worker && worker.sessionCode.trim().toUpperCase() !== String(sessionCode).trim().toUpperCase()) {
+        res.status(403).json({
+          success: false,
+          error: 'El Código Único de Sesión ingresado no coincide con el asignado al DNI del trabajador.',
+        });
+        return;
+      }
+    }
     const updatedWorker = await submitElearningAttemptWorkflow({
       workerId,
       scoreObtained: Number(scoreObtained),
@@ -288,7 +312,15 @@ apiRouter.post('/elearning/submit', async (req, res) => {
   }
 });
 
-// 7. Carné Digital QR y Cola de Fotocheck Físico PVC en Garita
+// 7. Carné Digital QR, Verificador Criptográfico en Garita y Cola de Fotocheck Físico PVC
+apiRouter.get('/badges/verify/:code', async (req, res) => {
+  try {
+    const result = await verifyGaritaBadgeOrDni(String(req.params.code));
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
 apiRouter.get('/badges', async (_req, res) => {
   try {
     const badges = await prisma.digitalBadgeQr.findMany({
