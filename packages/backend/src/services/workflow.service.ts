@@ -162,6 +162,8 @@ export async function processWorkerDocumentWorkflow(params: {
 
   const ruleEval = evaluateDocumentRules({
     workerDni: workerDoc.worker.dni,
+    workerJobPosition: workerDoc.worker.jobPosition,
+    requirementCode: workerDoc.requirement.code,
     requiresValidity: workerDoc.requirement.requiresValidity,
     extractedText,
     ocrConfidence,

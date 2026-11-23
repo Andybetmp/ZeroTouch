@@ -2,6 +2,8 @@ import { DocumentStatus } from '@prisma/client';
 
 export interface DocumentRuleEvaluationInput {
   workerDni: string;
+  workerJobPosition?: string;
+  requirementCode?: string;
   requiresValidity: boolean;
   extractedText: string;
   ocrConfidence: number;
@@ -9,6 +11,25 @@ export interface DocumentRuleEvaluationInput {
   detectedExpiryDate: Date | null;
   referenceToday?: Date;
 }
+
+const JOB_PROFILE_KEYWORDS: Record<string, { label: string; keywords: RegExp }> = {
+  INGENIERO: {
+    label: 'Especialista / Ingeniero Colegiado (CIP)',
+    keywords: /(ingenier[oa]|cip|colegiad[oa]|especialista|proyectos|minas|geolog|metalurg|civil|industrial)/i,
+  },
+  CONDUCTOR: {
+    label: 'Conductor de Unidad / Operador de Vehículo',
+    keywords: /(conductor|chofer|operador|licencia|mtc|a-ii|a-iii|manejo\s+defensivo|transporte)/i,
+  },
+  PERSONAL_COCINA: {
+    label: 'Personal Gastronómico / Manipulación de Alimentos',
+    keywords: /(cocin[ae]|gastronom|alimentos|comedor|nutrici|sanidad|higiene|chef)/i,
+  },
+  TECNICO: {
+    label: 'Técnico Especialista / Mantenimiento',
+    keywords: /(t[eé]cnico|mantenimiento|electricista|mec[aá]nico|instrumentista|soldador|especialista)/i,
+  },
+};
 
 export interface DocumentRuleEvaluationOutput {
   status: DocumentStatus;
@@ -87,10 +108,30 @@ export function evaluateDocumentRules(
     };
   }
 
-  // Prioridad 5: Documento no requiere vigencia y es legible + consistente
+  // Prioridad 5: Validación contextual de CV Documentado según el Perfil / Especialidad del Puesto
+  if (
+    input.requirementCode === 'CV_DOC' &&
+    input.workerJobPosition &&
+    JOB_PROFILE_KEYWORDS[input.workerJobPosition]
+  ) {
+    const profileRule = JOB_PROFILE_KEYWORDS[input.workerJobPosition];
+    // Si el CV NO es un documento sintético genérico y menciona explícitamente otro oficio incompatible o carece de palabras clave del perfil
+    const isGenericDemo = /EXPEDIENTE BATEAS ZERO-TOUCH|CERTIFICADO OFICIAL/i.test(cleanText);
+    if (!isGenericDemo && !profileRule.keywords.test(cleanText)) {
+      const reason = `Validación de Perfil en CV: No se detectaron competencias o palabras clave para el puesto "${profileRule.label}". Derivado a Bandeja de Excepciones (DHO / Área Usuaria) para evaluación humana (no se rechaza a ciegas).`;
+      return {
+        status: 'AMBAR',
+        statusReason: reason,
+        shouldCreateException: true,
+        exceptionReason: reason,
+      };
+    }
+  }
+
+  // Prioridad 6: Documento no requiere vigencia y es legible + consistente
   return {
     status: 'VERDE',
-    statusReason: 'Pre-aprobado Zero-Touch: Documento legible y datos consistentes (no requiere fecha de vigencia).',
+    statusReason: 'Pre-aprobado Zero-Touch: Documento legible, identidad y perfil consistentes (no requiere fecha de vigencia).',
     shouldCreateException: false,
     exceptionReason: null,
   };

@@ -150,6 +150,16 @@ export default function App() {
     token: string;
   } | null>(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('autologin') === '1') {
+        return {
+          username: 'ssoma@bateas.pe',
+          role: 'SSOMA_DHO',
+          fullName: 'Esp. Víctor Cayata (DHO / SSOMA)',
+          areaLabel: 'Auditoría Interna Minera Bateas',
+          token: 'demo-token',
+        };
+      }
       const saved = sessionStorage.getItem('bateas_auth_user');
       return saved ? JSON.parse(saved) : null;
     } catch {
@@ -161,7 +171,10 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState<boolean>(false);
 
-  const [activeNav, setActiveNav] = useState<NavSection>('INICIO_ACCESO_DIRECTO');
+  const [activeNav, setActiveNav] = useState<NavSection>(() => {
+    const viewParam = new URLSearchParams(window.location.search).get('view') as NavSection | null;
+    return viewParam || 'INICIO_ACCESO_DIRECTO';
+  });
   const [afiliacionesOpen, setAfiliacionesOpen] = useState<boolean>(true);
   const [activeRoleLabel, setActiveRoleLabel] = useState<'ADMIN_ECM' | 'SSOMA_DHO' | 'GARITA'>('ADMIN_ECM');
 
@@ -214,7 +227,9 @@ export default function App() {
   const [inspectedDoc, setInspectedDoc] = useState<WorkerDocument | null>(null);
 
   // Estado del Copiloto IA (Gemini + MCP Context)
-  const [showCopilot, setShowCopilot] = useState<boolean>(false);
+  const [showCopilot, setShowCopilot] = useState<boolean>(() => {
+    return new URLSearchParams(window.location.search).get('copilot') === '1';
+  });
   const [copilotInput, setCopilotInput] = useState<string>('');
   const [copilotLoading, setCopilotLoading] = useState<boolean>(false);
   const [copilotMessages, setCopilotMessages] = useState<
@@ -408,7 +423,7 @@ export default function App() {
   const handleQuickOcrSimulate = async (
     worker: Worker,
     doc: WorkerDocument,
-    mode: 'VALID' | 'EXPIRED' | 'UNCERTAIN'
+    mode: 'VALID' | 'EXPIRED' | 'UNCERTAIN' | 'CV_MISMATCH'
   ) => {
     setLoading(true);
     try {
@@ -417,9 +432,11 @@ export default function App() {
 
       let simulatedText = `MINERA BATEAS S.A.C. - EXPEDIENTE DE AFILIACION\nDocumento: ${doc.requirement.name}\nTrabajador: ${worker.fullName}\nDNI: ${worker.dni}\nEmpresa: ${worker.contractor.companyName}\n`;
       if (mode === 'VALID') {
-        simulatedText += `Fecha de vencimiento: ${future}\nDictamen: VIGENTE / CONFORME`;
+        simulatedText += `Especialidad verificada para puesto: ${worker.jobPosition}\nFecha de vencimiento: ${future}\nDictamen: VIGENTE / CONFORME`;
       } else if (mode === 'EXPIRED') {
         simulatedText += `Fecha de vencimiento: ${past}\nDictamen: VENCIDO`;
+      } else if (mode === 'CV_MISMATCH') {
+        simulatedText = `CURRICULUM VITAE\nPostulante: ${worker.fullName}\nDNI: ${worker.dni}\nExperiencia: 2 años en atención al cliente y ventas retail (Sin mención de especialidad técnica ni colegiatura para ${worker.jobPosition}).`;
       } else {
         simulatedText = `DOCUMENTO ESCANEADO CON SELLO SOBRE FECHA\nTrabajador: ${worker.fullName}\nDNI: ${worker.dni}\nVigencia: [ILEGIBLE - REQUIERE REVISION HUMANA]`;
       }
@@ -1876,6 +1893,15 @@ export default function App() {
                                         >
                                           OCR Vigente
                                         </button>
+                                        {doc.requirement.code === 'CV_DOC' && (
+                                          <button
+                                            onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'CV_MISMATCH')}
+                                            className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
+                                            title="Simular CV sin la especialidad requerida para el puesto (pasa a ÁMBAR en Bandeja de Excepciones)"
+                                          >
+                                            CV Sin Especialidad (Ámbar)
+                                          </button>
+                                        )}
                                         {doc.requirement.requiresValidity && (
                                           <>
                                             <button
