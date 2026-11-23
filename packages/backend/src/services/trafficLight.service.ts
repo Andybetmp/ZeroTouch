@@ -6,23 +6,34 @@ export interface GlobalTrafficLightEvaluation {
   trafficLight: TrafficLightStatus;
   statusSummary: string;
   shouldIssueQr: boolean;
+  phase1Passed: boolean;
 }
 
+export const PHASE1_FILTER_CODES = new Set(['DNI', 'CV_DOC']);
+
 /**
- * Función pura determinista para calcular el Semáforo Operativo Global (Spec 03).
+ * Función pura determinista para calcular el Semáforo Operativo Global en 2 Fases (Filtro 1: Postulación DNI + CV -> Fase 2: Habilitación SCTR/EMO/E-Learning).
  */
 export function computeGlobalTrafficLight(params: {
   isBlacklisted: boolean;
-  mandatoryDocs: { status: DocumentStatus; requirementName: string }[];
+  mandatoryDocs: { code?: string; status: DocumentStatus; requirementName: string }[];
   elearningPassed: boolean;
 }): GlobalTrafficLightEvaluation {
   if (params.isBlacklisted) {
     return {
       trafficLight: 'ROJO',
-      statusSummary: 'BLOQUEADO: Trabajador registra restricción activa en Lista Negra de Minera Bateas.',
+      statusSummary: 'BLOQUEADO (Filtro 0): Trabajador registra restricción activa en Lista Negra de Minera Bateas.',
       shouldIssueQr: false,
+      phase1Passed: false,
     };
   }
+
+  // Evaluar Fase 1 (Primer Filtro de Postulación: DNI + CV Documentado)
+  const phase1Docs = params.mandatoryDocs.filter((d) =>
+    d.code ? PHASE1_FILTER_CODES.has(d.code) : /DNI|CV/i.test(d.requirementName)
+  );
+  const phase1Passed =
+    phase1Docs.length === 0 || phase1Docs.every((d) => d.status === 'VERDE');
 
   const redDocs = params.mandatoryDocs.filter((d) => d.status === 'ROJO');
   if (redDocs.length > 0) {
@@ -31,6 +42,27 @@ export function computeGlobalTrafficLight(params: {
       trafficLight: 'ROJO',
       statusSummary: `REQUISITO INCUMPLIDO: Documentos vencidos o rechazados (${names}).`,
       shouldIssueQr: false,
+      phase1Passed,
+    };
+  }
+
+  if (!phase1Passed) {
+    const phase1Amber = phase1Docs.filter((d) => d.status === 'AMBAR');
+    if (phase1Amber.length > 0) {
+      return {
+        trafficLight: 'AMBAR',
+        statusSummary:
+          'FASE 1 (FILTRO DE POSTULACIÓN EN REVISIÓN): DNI o CV Documentado derivado a Bandeja de Excepciones para validar perfil/especialidad antes de solicitar EMO/SCTR.',
+        shouldIssueQr: false,
+        phase1Passed: false,
+      };
+    }
+    return {
+      trafficLight: 'AMBAR',
+      statusSummary:
+        'FASE 1 (PRIMER FILTRO DE POSTULACIÓN): Solicitud inicial activa. Adjunte solo DNI y CV Actualizado para evaluar perfil antes de desbloquear EMO, SCTR y demás documentos.',
+      shouldIssueQr: false,
+      phase1Passed: false,
     };
   }
 
@@ -44,17 +76,18 @@ export function computeGlobalTrafficLight(params: {
     return {
       trafficLight: 'VERDE',
       statusSummary:
-        'HABILITADO ZERO-TOUCH: 100% documentos obligatorios vigentes y E-Learning aprobado. Carné QR emitido.',
+        'HABILITADO ZERO-TOUCH (Fase 1 y 2 Completas): Perfil aprobado, 100% documentos vigentes y E-Learning superado. Carné QR emitido.',
       shouldIssueQr: true,
+      phase1Passed: true,
     };
   }
 
-  const reasons: string[] = [];
+  const reasons: string[] = ['Fase 1 (DNI + CV) Aprobada ✅'];
   if (amberDocs.length > 0) {
-    reasons.push(`${amberDocs.length} doc(s) en Bandeja de Excepciones`);
+    reasons.push(`${amberDocs.length} doc(s) de Fase 2 en Bandeja de Excepciones`);
   }
   if (pendingDocs.length > 0) {
-    reasons.push(`${pendingDocs.length} doc(s) pendientes de carga`);
+    reasons.push(`${pendingDocs.length} doc(s) de Fase 2 desbloqueados pendientes de carga`);
   }
   if (!params.elearningPassed) {
     reasons.push('Inducción E-Learning pendiente');
@@ -62,8 +95,9 @@ export function computeGlobalTrafficLight(params: {
 
   return {
     trafficLight: 'AMBAR',
-    statusSummary: `EN PROCESO / REVISIÓN: ${reasons.join(' · ')}.`,
+    statusSummary: `FASE 2 DESBLOQUEADA: ${reasons.join(' · ')}.`,
     shouldIssueQr: false,
+    phase1Passed: true,
   };
 }
 
@@ -90,6 +124,7 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
   const mandatoryDocs = worker.documents
     .filter((doc) => doc.requirement.isMandatory)
     .map((doc) => ({
+      code: doc.requirement.code,
       status: doc.status,
       requirementName: doc.requirement.name,
       detectedExpiryDate: doc.detectedExpiryDate,

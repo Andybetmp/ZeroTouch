@@ -1781,153 +1781,368 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Tabla Web de Documentos del Expediente (Estilo Figura 3 App Bateas) */}
-                    <div className="bg-white rounded border border-slate-200 shadow-2xs overflow-hidden">
-                      <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <h3 className="font-bold text-sm text-slate-800">
-                            Checklist Documental por Perfil y Pre-Validación OCR
-                          </h3>
-                          <p className="text-[11px] text-slate-500">
-                            Suba un archivo PDF o imagen, o utilice los botones de prueba rápida para verificar la
-                            respuesta del motor OCR y del Semáforo Operativo.
-                          </p>
-                        </div>
-                      </div>
+                    {/* Tabla Web de Documentos del Expediente en 2 Etapas (Fase 1: Primer Filtro Postulación DNI + CV -> Fase 2: Habilitación EMO, SCTR, Certificados) */}
+                    {(() => {
+                      const phase1Docs = selectedWorker.documents.filter((d) =>
+                        ['DNI', 'CV_DOC'].includes(d.requirement.code)
+                      );
+                      const phase2Docs = selectedWorker.documents.filter(
+                        (d) => !['DNI', 'CV_DOC'].includes(d.requirement.code)
+                      );
+                      const isPhase1Approved =
+                        phase1Docs.length > 0 && phase1Docs.every((d) => d.status === 'VERDE');
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
-                              <th className="p-3 font-bold">#</th>
-                              <th className="p-3 font-bold">Requisito Documental</th>
-                              <th className="p-3 font-bold text-center">¿Es obligatorio?</th>
-                              <th className="p-3 font-bold text-center">¿Requiere vigencia?</th>
-                              <th className="p-3 font-bold">Vigencia / DNI Extraído (OCR)</th>
-                              <th className="p-3 font-bold">Semáforo Doc</th>
-                              <th className="p-3 font-bold text-right">Acciones (Carga / OCR)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-200">
-                            {selectedWorker.documents.map((doc, idx) => (
-                              <tr key={doc.id} className="hover:bg-slate-50/90">
-                                <td className="p-3 font-semibold text-slate-500">{idx + 1}</td>
-                                <td className="p-3">
-                                  <p className="font-bold text-slate-900">{doc.requirement.name}</p>
-                                  <p className="text-[11px] text-slate-500 mt-0.5">{doc.statusReason}</p>
-                                  {doc.fileName && (
-                                    <span className="inline-block mt-1 text-[10px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                                      📄 {doc.fileName} ({doc.extractionMethod || 'OCR'})
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="p-3 text-center">
-                                  <span
-                                    className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                                      doc.requirement.isMandatory
-                                        ? 'bg-[#28a745] text-white'
-                                        : 'bg-[#f39c12] text-white'
-                                    }`}
-                                  >
-                                    {doc.requirement.isMandatory ? 'Sí' : 'No'}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-center">
-                                  <span
-                                    className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                                      doc.requirement.requiresValidity
-                                        ? 'bg-[#28a745] text-white'
-                                        : 'bg-[#f39c12] text-white'
-                                    }`}
-                                  >
-                                    {doc.requirement.requiresValidity ? 'Sí' : 'No'}
-                                  </span>
-                                </td>
-                                <td className="p-3 text-[11px]">
-                                  <div>
-                                    Vigencia:{' '}
-                                    <strong>
-                                      {doc.detectedExpiryDate ? String(doc.detectedExpiryDate).split('T')[0] : '—'}
-                                    </strong>
-                                  </div>
-                                  {isDocExpiringWithin20Days(doc.detectedExpiryDate) && (
-                                    <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
-                                      ⚠️ Próximo a vencer (&lt;20d)
-                                    </span>
-                                  )}
-                                  <div className="text-slate-500">DNI leído: {doc.detectedDni || '—'}</div>
-                                </td>
-                                <td className="p-3">{renderTrafficPill(doc.status)}</td>
-                                <td className="p-3 text-right">
-                                  {!selectedWorker.isBlacklisted && (
-                                    <div className="flex flex-col items-end gap-1.5">
-                                      <div className="flex items-center gap-1">
-                                        <label className="px-2.5 py-1 bg-[#007bff] hover:bg-blue-600 text-white text-[11px] font-bold rounded cursor-pointer inline-flex items-center gap-1 shadow-2xs">
-                                          <Upload className="w-3 h-3" /> Subir PDF/Img
-                                          <input
-                                            type="file"
-                                            accept=".pdf,.png,.jpg,.jpeg"
-                                            className="hidden"
-                                            onChange={(e) => {
-                                              const f = e.target.files?.[0];
-                                              if (f) handleFileUpload(selectedWorker.id, doc.requirementId, f);
-                                            }}
-                                          />
-                                        </label>
-                                        {doc.extractedText && (
-                                          <button
-                                            onClick={() => setInspectedDoc(doc)}
-                                            className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold rounded cursor-pointer"
-                                            title="Inspeccionar texto leído por el motor OCR"
-                                          >
-                                            <Eye className="w-3.5 h-3.5" />
-                                          </button>
+                      return (
+                        <div className="space-y-4">
+                          {/* STEPPER VISUAL DE 2 ETAPAS (PROPUESTA CLIENTE EMILSE) */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div
+                              className={`p-3.5 rounded border-2 flex items-center justify-between ${
+                                isPhase1Approved
+                                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950'
+                                  : 'bg-sky-50 border-sky-500 text-sky-950'
+                              }`}
+                            >
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-wider block">
+                                  ETAPA 1 · PRIMER FILTRO DE POSTULACIÓN (SELECCIÓN)
+                                </span>
+                                <h4 className="font-bold text-xs mt-0.5">
+                                  1. Evaluación de DNI + CV Actualizado (Perfil, Formación y Especialidad)
+                                </h4>
+                              </div>
+                              <span
+                                className={`px-2.5 py-1 rounded text-[10px] font-black ${
+                                  isPhase1Approved
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-sky-600 text-white'
+                                }`}
+                              >
+                                {isPhase1Approved ? '✅ FILTRO 1 SUPERADO' : '🔎 EN EVALUACIÓN'}
+                              </span>
+                            </div>
+
+                            <div
+                              className={`p-3.5 rounded border-2 flex items-center justify-between ${
+                                isPhase1Approved
+                                  ? 'bg-white border-emerald-500 text-slate-900'
+                                  : 'bg-slate-100 border-slate-300 text-slate-500'
+                              }`}
+                            >
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-wider block">
+                                  ETAPA 2 · DOCUMENTACIÓN DE HABILITACIÓN E INGRESO A MINA
+                                </span>
+                                <h4 className="font-bold text-xs mt-0.5">
+                                  2. Solicitud de EMO (Anexo 16), SCTR, Certificados, DDJJ y E-Learning
+                                </h4>
+                              </div>
+                              <span
+                                className={`px-2.5 py-1 rounded text-[10px] font-black flex items-center gap-1 ${
+                                  isPhase1Approved
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    : 'bg-slate-200 text-slate-600'
+                                }`}
+                              >
+                                {isPhase1Approved ? (
+                                  <>🔓 HABILITADA</>
+                                ) : (
+                                  <>
+                                    <Lock className="w-3 h-3" /> BLOQUEADA HASTA PASAR FILTRO 1
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* TABLA ETAPA 1: PRIMER FILTRO (SOLO DNI Y CV ACTUALIZADO) */}
+                          <div className="bg-white rounded border-2 border-sky-500 shadow-2xs overflow-hidden">
+                            <div className="px-5 py-3 bg-sky-900 text-white flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <h3 className="font-bold text-xs uppercase tracking-wider text-sky-200">
+                                  Etapa 1 · Primer Filtro de Postulación (Solo DNI y CV Actualizado)
+                                </h3>
+                                <p className="text-[11px] text-sky-100">
+                                  Evalúa identidad (Lista Negra) y requisitos básicos del puesto (formación,
+                                  experiencia y especialidad en el CV). Solo al aprobar ambos en VERDE se solicita el
+                                  resto de documentos.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                                    <th className="p-3 font-bold">Filtro</th>
+                                    <th className="p-3 font-bold">Requisito Inicial de Postulación</th>
+                                    <th className="p-3 font-bold text-center">¿Es obligatorio?</th>
+                                    <th className="p-3 font-bold">Validación OCR + Perfil / Especialidad</th>
+                                    <th className="p-3 font-bold">Estado Filtro 1</th>
+                                    <th className="p-3 font-bold text-right">Acciones (Carga / OCR)</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-200">
+                                  {phase1Docs.map((doc, idx) => (
+                                    <tr key={doc.id} className="hover:bg-sky-50/40">
+                                      <td className="p-3 font-black text-sky-800">F1-{idx + 1}</td>
+                                      <td className="p-3">
+                                        <p className="font-bold text-slate-900">{doc.requirement.name}</p>
+                                        <p className="text-[11px] text-slate-600 mt-0.5">{doc.statusReason}</p>
+                                        {doc.fileName && (
+                                          <span className="inline-block mt-1 text-[10px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                                            📄 {doc.fileName} ({doc.extractionMethod || 'OCR'})
+                                          </span>
                                         )}
-                                      </div>
+                                      </td>
+                                      <td className="p-3 text-center">
+                                        <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-[#28a745] text-white">
+                                          Sí (Filtro 1)
+                                        </span>
+                                      </td>
+                                      <td className="p-3 text-[11px]">
+                                        <div>
+                                          DNI leído: <strong>{doc.detectedDni || '—'}</strong>
+                                        </div>
+                                        <div className="text-slate-500">
+                                          Puesto evaluado: <strong>{selectedWorker.jobPosition}</strong>
+                                        </div>
+                                      </td>
+                                      <td className="p-3">{renderTrafficPill(doc.status)}</td>
+                                      <td className="p-3 text-right">
+                                        {!selectedWorker.isBlacklisted && (
+                                          <div className="flex flex-col items-end gap-1.5">
+                                            <div className="flex items-center gap-1">
+                                              <label className="px-2.5 py-1 bg-[#007bff] hover:bg-blue-600 text-white text-[11px] font-bold rounded cursor-pointer inline-flex items-center gap-1 shadow-2xs">
+                                                <Upload className="w-3 h-3" /> Subir PDF/Img
+                                                <input
+                                                  type="file"
+                                                  accept=".pdf,.png,.jpg,.jpeg"
+                                                  className="hidden"
+                                                  onChange={(e) => {
+                                                    const f = e.target.files?.[0];
+                                                    if (f) handleFileUpload(selectedWorker.id, doc.requirementId, f);
+                                                  }}
+                                                />
+                                              </label>
+                                              {doc.extractedText && (
+                                                <button
+                                                  onClick={() => setInspectedDoc(doc)}
+                                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold rounded cursor-pointer"
+                                                  title="Inspeccionar texto leído por el motor OCR"
+                                                >
+                                                  <Eye className="w-3.5 h-3.5" />
+                                                </button>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                              <button
+                                                onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
+                                                className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded cursor-pointer"
+                                              >
+                                                {doc.requirement.code === 'CV_DOC'
+                                                  ? 'CV Cumple Perfil (Verde)'
+                                                  : 'DNI Válido (Verde)'}
+                                              </button>
+                                              {doc.requirement.code === 'CV_DOC' && (
+                                                <button
+                                                  onClick={() =>
+                                                    handleQuickOcrSimulate(selectedWorker, doc, 'CV_MISMATCH')
+                                                  }
+                                                  className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
+                                                >
+                                                  CV Sin Especialidad (Ámbar)
+                                                </button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
 
-                                      {/* Botones de prueba unitaria OCR para demostración */}
-                                      <div className="flex items-center gap-1">
-                                        <button
-                                          onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
-                                          className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded cursor-pointer"
+                          {/* TABLA ETAPA 2: DOCUMENTOS DE HABILITACIÓN (SE DESBLOQUEA SOLO AL PASAR ETAPA 1) */}
+                          <div
+                            className={`bg-white rounded border shadow-2xs overflow-hidden transition ${
+                              isPhase1Approved ? 'border-emerald-400' : 'border-slate-300 opacity-85'
+                            }`}
+                          >
+                            <div
+                              className={`px-5 py-3.5 border-b flex flex-wrap items-center justify-between gap-2 ${
+                                isPhase1Approved
+                                  ? 'bg-emerald-900 text-white border-emerald-800'
+                                  : 'bg-slate-200 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              <div>
+                                <h3 className="font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
+                                  {isPhase1Approved ? (
+                                    <>🔓 Etapa 2 Desbloqueada · Documentos de Habilitación Médica, SCTR y Certificados</>
+                                  ) : (
+                                    <>
+                                      <Lock className="w-3.5 h-3.5" /> Etapa 2 Bloqueada · Documentos Adicionales (EMO,
+                                      SCTR, Certificados, DDJJ)
+                                    </>
+                                  )}
+                                </h3>
+                                <p
+                                  className={`text-[11px] ${
+                                    isPhase1Approved ? 'text-emerald-100' : 'text-slate-600'
+                                  }`}
+                                >
+                                  {isPhase1Approved
+                                    ? 'El postulante superó el Primer Filtro (DNI + CV). Ahora puede adjuntar el Examen Médico (EMO), SCTR y certificados del puesto.'
+                                    : 'Para evitar pedir documentación excesiva desde el inicio, esta sección se habilitará automáticamente en cuanto el DNI y el CV Actualizado estén aprobados en VERDE.'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
+                                    <th className="p-3 font-bold">#</th>
+                                    <th className="p-3 font-bold">Requisito Documental (Etapa 2)</th>
+                                    <th className="p-3 font-bold text-center">¿Es obligatorio?</th>
+                                    <th className="p-3 font-bold text-center">¿Requiere vigencia?</th>
+                                    <th className="p-3 font-bold">Vigencia / DNI Extraído (OCR)</th>
+                                    <th className="p-3 font-bold">Semáforo Doc</th>
+                                    <th className="p-3 font-bold text-right">Acciones (Carga / OCR)</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-200">
+                                  {phase2Docs.map((doc, idx) => (
+                                    <tr key={doc.id} className="hover:bg-slate-50/90">
+                                      <td className="p-3 font-semibold text-slate-500">F2-{idx + 1}</td>
+                                      <td className="p-3">
+                                        <p className="font-bold text-slate-900">{doc.requirement.name}</p>
+                                        <p className="text-[11px] text-slate-500 mt-0.5">
+                                          {!isPhase1Approved && doc.status === 'PENDIENTE'
+                                            ? '🔒 En espera de aprobación del Primer Filtro (DNI + CV)'
+                                            : doc.statusReason}
+                                        </p>
+                                        {doc.fileName && (
+                                          <span className="inline-block mt-1 text-[10px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                                            📄 {doc.fileName} ({doc.extractionMethod || 'OCR'})
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="p-3 text-center">
+                                        <span
+                                          className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                                            doc.requirement.isMandatory
+                                              ? 'bg-[#28a745] text-white'
+                                              : 'bg-[#f39c12] text-white'
+                                          }`}
                                         >
-                                          OCR Vigente
-                                        </button>
-                                        {doc.requirement.code === 'CV_DOC' && (
-                                          <button
-                                            onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'CV_MISMATCH')}
-                                            className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
-                                            title="Simular CV sin la especialidad requerida para el puesto (pasa a ÁMBAR en Bandeja de Excepciones)"
-                                          >
-                                            CV Sin Especialidad (Ámbar)
-                                          </button>
+                                          {doc.requirement.isMandatory ? 'Sí' : 'No'}
+                                        </span>
+                                      </td>
+                                      <td className="p-3 text-center">
+                                        <span
+                                          className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                                            doc.requirement.requiresValidity
+                                              ? 'bg-[#28a745] text-white'
+                                              : 'bg-[#f39c12] text-white'
+                                          }`}
+                                        >
+                                          {doc.requirement.requiresValidity ? 'Sí' : 'No'}
+                                        </span>
+                                      </td>
+                                      <td className="p-3 text-[11px]">
+                                        <div>
+                                          Vigencia:{' '}
+                                          <strong>
+                                            {doc.detectedExpiryDate
+                                              ? String(doc.detectedExpiryDate).split('T')[0]
+                                              : '—'}
+                                          </strong>
+                                        </div>
+                                        {isDocExpiringWithin20Days(doc.detectedExpiryDate) && (
+                                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
+                                            ⚠️ Próximo a vencer (&lt;20d)
+                                          </span>
                                         )}
-                                        {doc.requirement.requiresValidity && (
-                                          <>
-                                            <button
-                                              onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'UNCERTAIN')}
-                                              className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
-                                            >
-                                              OCR Ámbar
-                                            </button>
-                                            <button
-                                              onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'EXPIRED')}
-                                              className="px-1.5 py-0.5 text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded cursor-pointer"
-                                            >
-                                              OCR Vencido
-                                            </button>
-                                          </>
+                                        <div className="text-slate-500">DNI leído: {doc.detectedDni || '—'}</div>
+                                      </td>
+                                      <td className="p-3">{renderTrafficPill(doc.status)}</td>
+                                      <td className="p-3 text-right">
+                                        {!selectedWorker.isBlacklisted && (
+                                          isPhase1Approved ? (
+                                            <div className="flex flex-col items-end gap-1.5">
+                                              <div className="flex items-center gap-1">
+                                                <label className="px-2.5 py-1 bg-[#007bff] hover:bg-blue-600 text-white text-[11px] font-bold rounded cursor-pointer inline-flex items-center gap-1 shadow-2xs">
+                                                  <Upload className="w-3 h-3" /> Subir PDF/Img
+                                                  <input
+                                                    type="file"
+                                                    accept=".pdf,.png,.jpg,.jpeg"
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                      const f = e.target.files?.[0];
+                                                      if (f) handleFileUpload(selectedWorker.id, doc.requirementId, f);
+                                                    }}
+                                                  />
+                                                </label>
+                                                {doc.extractedText && (
+                                                  <button
+                                                    onClick={() => setInspectedDoc(doc)}
+                                                    className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold rounded cursor-pointer"
+                                                    title="Inspeccionar texto leído por el motor OCR"
+                                                  >
+                                                    <Eye className="w-3.5 h-3.5" />
+                                                  </button>
+                                                )}
+                                              </div>
+
+                                              <div className="flex items-center gap-1">
+                                                <button
+                                                  onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
+                                                  className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded cursor-pointer"
+                                                >
+                                                  OCR Vigente
+                                                </button>
+                                                {doc.requirement.requiresValidity && (
+                                                  <>
+                                                    <button
+                                                      onClick={() =>
+                                                        handleQuickOcrSimulate(selectedWorker, doc, 'UNCERTAIN')
+                                                      }
+                                                      className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
+                                                    >
+                                                      OCR Ámbar
+                                                    </button>
+                                                    <button
+                                                      onClick={() =>
+                                                        handleQuickOcrSimulate(selectedWorker, doc, 'EXPIRED')
+                                                      }
+                                                      className="px-1.5 py-0.5 text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded cursor-pointer"
+                                                    >
+                                                      OCR Vencido
+                                                    </button>
+                                                  </>
+                                                )}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 text-slate-500 border border-slate-300 text-[10px] font-bold">
+                                              <Lock className="w-3 h-3" /> Pase Filtro 1 (DNI + CV)
+                                            </span>
+                                          )
                                         )}
-                                      </div>
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Bitácora de Auditoría e Historial Transaccional del Expediente (Spec 02 y Spec 05) */}
                     {selectedWorker.auditLogs && selectedWorker.auditLogs.length > 0 && (

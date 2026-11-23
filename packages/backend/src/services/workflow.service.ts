@@ -50,13 +50,25 @@ export async function registerWorkerWorkflow(input: RegisterWorkerInput) {
   const isBlacklisted = Boolean(blacklistRecord && blacklistRecord.isActive);
 
   // 3. Obtener requisitos aplicables desde stay_type_requirements (App Bateas v2.1.0)
-  const requirements = await prisma.stayTypeRequirement.findMany({
+  let requirements = await prisma.stayTypeRequirement.findMany({
     where: {
       stayType,
       OR: [{ applicableJob: null }, { applicableJob: input.jobPosition }],
     },
     orderBy: [{ isMandatory: 'desc' }, { name: 'asc' }],
   });
+
+  // Fallback: Si se eligió TEMPORAL o VISITA_TECNICA y aún no hay filas específicas para esa estadía,
+  // usar los requisitos base de PERMANENTE_CIA (DNI, SCTR, EMO, CV, etc.) para que siempre permita cargar documentos.
+  if (requirements.length === 0) {
+    requirements = await prisma.stayTypeRequirement.findMany({
+      where: {
+        stayType: 'PERMANENTE_CIA',
+        OR: [{ applicableJob: null }, { applicableJob: input.jobPosition }],
+      },
+      orderBy: [{ isMandatory: 'desc' }, { name: 'asc' }],
+    });
+  }
 
   const sessionCode = `BZT-${cleanDni.slice(-4)}-${Math.floor(100 + Math.random() * 900)}`;
 
@@ -130,6 +142,24 @@ export async function processWorkerDocumentWorkflow(params: {
 
   if (!workerDoc) {
     throw new Error('El requisito especificado no pertenece al expediente del trabajador.');
+  }
+
+  // Validación del Primer Filtro de Postulación (Fase 1: DNI + CV Actualizado)
+  if (!['DNI', 'CV_DOC'].includes(workerDoc.requirement.code)) {
+    const phase1Docs = await prisma.workerDocument.findMany({
+      where: {
+        workerId: params.workerId,
+        requirement: { code: { in: ['DNI', 'CV_DOC'] } },
+      },
+      include: { requirement: true },
+    });
+    const phase1Ready =
+      phase1Docs.length > 0 && phase1Docs.every((d) => d.status === 'VERDE');
+    if (!phase1Ready) {
+      throw new Error(
+        'Primer Filtro de Postulación pendiente: Primero debe cargar y aprobar el DNI y el CV Actualizado (Fase 1) antes de adjuntar EMO, SCTR u otros certificados.'
+      );
+    }
   }
 
   let extractedText = '';
@@ -450,7 +480,14 @@ export async function createDemoScenarioWorkflow(
 
   if (!worker) throw new Error('Error al crear trabajador de demostración');
 
-  for (const doc of worker.documents) {
+  // Ordenar para que en los escenarios Demo siempre se procesen primero DNI y CV_DOC (Fase 1) y así desbloqueen Fase 2
+  const sortedDocs = [...worker.documents].sort((a, b) => {
+    const aP1 = ['DNI', 'CV_DOC'].includes(a.requirement.code) ? 0 : 1;
+    const bP1 = ['DNI', 'CV_DOC'].includes(b.requirement.code) ? 0 : 1;
+    return aP1 - bP1;
+  });
+
+  for (const doc of sortedDocs) {
     if (!doc.requirement.isMandatory) continue;
 
     let expiryToUse: string | null = doc.requirement.requiresValidity ? futureStr : null;
