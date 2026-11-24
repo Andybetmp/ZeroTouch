@@ -1,10 +1,13 @@
 import { prisma } from '../src/config/prisma.js';
 import { createDemoScenarioWorkflow } from '../src/services/workflow.service.js';
+import { ensureWorkerTrainingPlan, upsertTrainingModuleCms } from '../src/services/training.service.js';
+import { ensureWorkerExternalIntegrations } from '../src/services/integrations.service.js';
+import { recalculateWorkerTrafficLight } from '../src/services/trafficLight.service.js';
 
 async function main() {
-  console.log('🌱 Sembrando tablas maestras de App Bateas v2.1.0 en PostgreSQL...');
+  console.log('🌱 Sembrando tablas maestras de App Bateas v2.1.0 + Normativa D.S. 024-2016-EM en Supabase...');
 
-  // 1. Requisitos por Tipo de Estadía (Réplica exacta de Entregable 3, Figura 3 + Perfiles)
+  // 1. Requisitos por Tipo de Estadía (App Bateas v2.1.0)
   const requirementsData = [
     {
       code: 'DNI',
@@ -130,7 +133,7 @@ async function main() {
     });
   }
 
-  // 3. Banco de Preguntas E-Learning Asíncrono 24/7
+  // 3. Banco de Preguntas E-Learning Clásico (compatibilidad)
   await prisma.quizQuestion.deleteMany({});
   await prisma.quizQuestion.createMany({
     data: [
@@ -177,13 +180,232 @@ async function main() {
     ],
   });
 
-  // 4. Crear los 3 casos demostrativos iniciales para que el dashboard arranque con datos ricos
-  console.log('⚡ Generando expedientes demostrativos con motor OCR real...');
-  await createDemoScenarioWorkflow('ZERO_TOUCH_GREEN');
-  await createDemoScenarioWorkflow('EXCEPTION_AMBER');
-  await createDemoScenarioWorkflow('EXPIRED_RED');
+  // 4. MÓDULO 2: Programa Oficial de Capacitación Híbrida (4 Días / 32 Horas - D.S. 024-2016-EM)
+  console.log('📚 Sembrando Malla Curricular de 4 Días / 32 Horas (D.S. 024-2016-EM)...');
+  const day1Mod = await upsertTrainingModuleCms({
+    code: 'D1-IND-GEN',
+    title: 'Día 1: Inducción General y Cultura de Seguridad Minera',
+    description:
+      'Políticas de SSO Minera Bateas, Reglamento Interno de Trabajo (RIT), Derecho a Decir NO, IPERC Base y Gestión Ambiental NTP.',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    dayNumber: 1,
+    modality: 'ELEARNING',
+    requiredHours: 8,
+    jobSpecialty: null,
+    orderIndex: 1,
+    isActive: true,
+  });
 
-  console.log('✅ Seed completado exitosamente.');
+  const day2Transversal = await upsertTrainingModuleCms({
+    code: 'D2-ESP-TRANS',
+    title: 'Día 2: Estándares Operativos, PETS, MATPEL e IPERC Continuo',
+    description:
+      'Capacitación específica obligatoria en trabajos de alto riesgo (altura, espacios confinados, bloqueo LOTO, MATPEL) + Examen Teórico.',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    dayNumber: 2,
+    modality: 'ELEARNING',
+    requiredHours: 8,
+    jobSpecialty: null,
+    orderIndex: 2,
+    isActive: true,
+  });
+
+  const day2Conductor = await upsertTrainingModuleCms({
+    code: 'D2-ESP-COND',
+    title: 'Día 2 (Especialidad Conductor): Manejo Defensivo y Fatiga en Mina',
+    description:
+      'Protocolo de transporte de personal y carga en interior mina/superficie, control de fatiga, somnolencia y check-list pre-uso.',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoy.mp4',
+    dayNumber: 2,
+    modality: 'ELEARNING',
+    requiredHours: 8,
+    jobSpecialty: 'CONDUCTOR',
+    orderIndex: 3,
+    isActive: true,
+  });
+
+  const day3Mod = await upsertTrainingModuleCms({
+    code: 'D3-PRAC-CAMPO',
+    title: 'Día 3: Práctica Presencial en Campo — Control de Riesgos Críticos (8h)',
+    description:
+      'Entrenamiento presencial guiado por instructor SSOMA en unidad minera: inspección de labores, uso de detector multigás y refugios.',
+    dayNumber: 3,
+    modality: 'PRESENTIAL',
+    requiredHours: 8,
+    jobSpecialty: null,
+    orderIndex: 4,
+    isActive: true,
+  });
+
+  const day4Mod = await upsertTrainingModuleCms({
+    code: 'D4-PRAC-RV',
+    title: 'Día 4: Evaluación Práctica en Campo + Simulador RV Socavón (8h)',
+    description:
+      'Evaluación práctica en campo (nota mínima 14/20) + Aprobación de los 4 escenarios críticos de Realidad Virtual subterránea.',
+    dayNumber: 4,
+    modality: 'VR',
+    requiredHours: 8,
+    jobSpecialty: null,
+    orderIndex: 5,
+    isActive: true,
+  });
+
+  // Preguntas para Día 2 (Transversal y Conductor)
+  await prisma.trainingQuestion.deleteMany({
+    where: { moduleId: { in: [day2Transversal.id, day2Conductor.id] } },
+  });
+
+  await prisma.trainingQuestion.createMany({
+    data: [
+      {
+        moduleId: day2Transversal.id,
+        questionText: 'Según el D.S. 024-2016-EM, ¿qué porcentaje mínimo de oxígeno debe existir en una labor subterránea para ingresar?',
+        optionsJson: JSON.stringify(['16.5% O2', '19.5% O2', '23.5% O2']),
+        correctIndex: 1,
+      },
+      {
+        moduleId: day2Transversal.id,
+        questionText: 'En el procedimiento de Bloqueo y Etiquetado (LOTO), ¿quién puede retirar un candado personal?',
+        optionsJson: JSON.stringify([
+          'El supervisor de guardia si hay prisa',
+          'Únicamente el trabajador que lo colocó tras verificar energía cero',
+          'Cualquier electricista de turno',
+        ]),
+        correctIndex: 1,
+      },
+      {
+        moduleId: day2Transversal.id,
+        questionText: 'Antes de iniciar cualquier tarea en socavón, ¿qué herramienta de gestión debe elaborarse obligatoriamente en el frente?',
+        optionsJson: JSON.stringify(['IPERC Continuo firmado por todo el equipo y supervisor', 'Solo la lista de asistencia', 'Ninguna si es tarea rutinaria']),
+        correctIndex: 0,
+      },
+      {
+        moduleId: day2Transversal.id,
+        questionText: 'Durante el desate de rocas sueltas con barretilla, el trabajador debe ubicarse:',
+        optionsJson: JSON.stringify([
+          'Directamente debajo de la roca suelta',
+          'Bajo techo ya sostenido y en ángulo seguro de 45°',
+          'De espaldas al frente de avance',
+        ]),
+        correctIndex: 1,
+      },
+      {
+        moduleId: day2Conductor.id,
+        questionText: 'Al aproximarse a un equipo pesado (Scooptram/Dumper) en galería subterránea, el conductor o peatón debe:',
+        optionsJson: JSON.stringify([
+          'Acelerar para pasarlo rápido',
+          'Establecer contacto visual/radial, usar refugio peatonal y respetar puntos ciegos',
+          'Apagar sus luces para no encandilar',
+        ]),
+        correctIndex: 1,
+      },
+    ],
+  });
+
+  // 5. Crear los 3 casos demostrativos iniciales con sus planes 32h + integraciones API
+  console.log('⚡ Generando expedientes demostrativos con motor OCR, Capacitación 32h e Integraciones API...');
+  const greenWorker = await createDemoScenarioWorkflow('ZERO_TOUCH_GREEN');
+  const amberWorker = await createDemoScenarioWorkflow('EXCEPTION_AMBER');
+  const redWorker = await createDemoScenarioWorkflow('EXPIRED_RED');
+
+  for (const w of [greenWorker, amberWorker, redWorker]) {
+    if (!w) continue;
+    await ensureWorkerTrainingPlan(w.id);
+    await ensureWorkerExternalIntegrations(w.id);
+  }
+
+  // Completar las 32h + RV para el trabajador ZERO_TOUCH_GREEN (Carlos Antonio Ramírez) para que mantenga su Semáforo VERDE
+  if (greenWorker) {
+    for (const m of [day1Mod, day2Transversal, day3Mod, day4Mod]) {
+      await prisma.workerTrainingProgress.upsert({
+        where: { workerId_moduleId: { workerId: greenWorker.id, moduleId: m.id } },
+        update: {
+          completedSeconds: m.requiredHours * 3600,
+          requiredSeconds: m.requiredHours * 3600,
+          status: 'COMPLETED',
+          examScore: m.dayNumber === 2 ? 100 : null,
+          practicalScore: m.dayNumber >= 3 ? 18 : null,
+          attendanceVerifiedBy: m.dayNumber >= 3 ? 'Ing. SSOMA Víctor Cayata' : null,
+          completedAt: new Date(),
+        },
+        create: {
+          workerId: greenWorker.id,
+          moduleId: m.id,
+          completedSeconds: m.requiredHours * 3600,
+          requiredSeconds: m.requiredHours * 3600,
+          status: 'COMPLETED',
+          examScore: m.dayNumber === 2 ? 100 : null,
+          practicalScore: m.dayNumber >= 3 ? 18 : null,
+          attendanceVerifiedBy: m.dayNumber >= 3 ? 'Ing. SSOMA Víctor Cayata' : null,
+          completedAt: new Date(),
+        },
+      });
+    }
+
+    for (const sc of ['SCALING_ROCK', 'GAS_VENTILATION', 'HEAVY_MACHINERY', 'LOTO_LOCKOUT']) {
+      await prisma.vrSimulationSession.create({
+        data: {
+          workerId: greenWorker.id,
+          pairingCode: '842910',
+          scenarioCode: sc,
+          score: 95,
+          criticalErrorsJson: '[]',
+          passed: true,
+          durationSeconds: 420,
+          syncedToPractical: true,
+          completedAt: new Date(),
+        },
+      });
+    }
+
+    await recalculateWorkerTrafficLight(greenWorker.id);
+  }
+
+  // 6. Sembrar Usuarios RBAC (SSOMA, ECM, GARITA, TRABAJADOR vinculado a Jorge Luis Huamán Condori)
+  const usersSeed = [
+    {
+      email: 'ssoma@bateas.pe',
+      passwordHash: 'Bateas2026!',
+      role: 'SSOMA' as const,
+      fullName: 'Esp. Víctor Cayata (DHO / SSOMA)',
+      areaLabel: 'Auditoría Interna Minera Bateas (SSOMA / Médico / DHO)',
+      workerId: null,
+    },
+    {
+      email: 'ecm@bateas.pe',
+      passwordHash: 'Bateas2026!',
+      role: 'ECM' as const,
+      fullName: 'Ing. Roberto Salazar (Admin ECM)',
+      areaLabel: 'Empresa Contratista Minera (ECM)',
+      workerId: null,
+    },
+    {
+      email: 'garita@bateas.pe',
+      passwordHash: 'Bateas2026!',
+      role: 'GARITA' as const,
+      fullName: 'Sup. Control Patrimonial Garita',
+      areaLabel: 'Control de Accesos y Fotocheck PVC',
+      workerId: null,
+    },
+    {
+      email: 'trabajador@bateas.pe',
+      passwordHash: 'Bateas2026!',
+      role: 'TRABAJADOR' as const,
+      fullName: amberWorker?.fullName || 'Jorge Luis Huamán Condori',
+      areaLabel: 'Portal Exclusivo del Trabajador (Ruta 32h / Biometría / RV)',
+      workerId: amberWorker?.id || null,
+    },
+  ];
+
+  for (const u of usersSeed) {
+    await prisma.user.upsert({
+      where: { email: u.email },
+      update: u,
+      create: u,
+    });
+  }
+
+  console.log('✅ Seed completo de los 5 módulos finalizado exitosamente.');
 }
 
 main()

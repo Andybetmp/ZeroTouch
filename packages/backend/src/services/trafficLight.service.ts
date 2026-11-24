@@ -114,6 +114,11 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
         include: { requirement: true },
       },
       digitalBadge: true,
+      integrationRecords: true,
+      trainingProgress: {
+        include: { module: true },
+      },
+      vrSessions: true,
     },
   });
 
@@ -130,11 +135,88 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
       detectedExpiryDate: doc.detectedExpiryDate,
     }));
 
-  const evaluation = computeGlobalTrafficLight({
+  // 1. Verificar estado de la Capacitación Híbrida de 4 días (32 horas) si tiene módulos asignados
+  let training32hReady = worker.elearningPassed;
+  let trainingPendingMessage = '';
+
+  const applicableProgress = worker.trainingProgress.filter(
+    (p) => p.module.isActive && (!p.module.jobSpecialty || p.module.jobSpecialty === worker.jobPosition)
+  );
+
+  if (applicableProgress.length > 0) {
+    const d1Ok = applicableProgress
+      .filter((p) => p.module.dayNumber === 1)
+      .every((p) => p.completedSeconds >= p.requiredSeconds && p.status === 'COMPLETED');
+    const d2Ok = applicableProgress
+      .filter((p) => p.module.dayNumber === 2)
+      .every((p) => p.completedSeconds >= p.requiredSeconds && (p.examScore ?? 0) >= 75 && p.status === 'COMPLETED');
+    const d34Ok = applicableProgress
+      .filter((p) => p.module.dayNumber === 3 || p.module.dayNumber === 4)
+      .every((p) => p.completedSeconds >= p.requiredSeconds && (p.practicalScore ?? 0) >= 14 && p.status === 'COMPLETED');
+
+    const reqVr = ['SCALING_ROCK', 'GAS_VENTILATION', 'HEAVY_MACHINERY', 'LOTO_LOCKOUT'];
+    const passedVr = new Set(worker.vrSessions.filter((s) => s.passed).map((s) => s.scenarioCode));
+    const vrOk = worker.vrSessions.length === 0 ? worker.elearningPassed : reqVr.every((c) => passedVr.has(c));
+
+    training32hReady = (d1Ok && d2Ok && d34Ok && vrOk) || (worker.elearningPassed && applicableProgress.every((p) => p.status === 'COMPLETED'));
+
+    if (!training32hReady) {
+      const missingSteps: string[] = [];
+      if (!d1Ok) missingSteps.push('Día 1 (8h)');
+      else if (!d2Ok) missingSteps.push('Día 2 (8h + Examen)');
+      else if (!d34Ok) missingSteps.push('Días 3-4 (16h Presencial)');
+      if (!vrOk && worker.vrSessions.length > 0) missingSteps.push('Simulación RV Socavón');
+      if (missingSteps.length > 0) {
+        trainingPendingMessage = `Capacitación 32h pendiente (${missingSteps.join(', ')})`;
+      }
+    }
+  }
+
+  let evaluation = computeGlobalTrafficLight({
     isBlacklisted: worker.isBlacklisted,
     mandatoryDocs,
-    elearningPassed: worker.elearningPassed,
+    elearningPassed: training32hReady,
   });
+
+  if (trainingPendingMessage && evaluation.trafficLight === 'AMBAR') {
+    evaluation = {
+      ...evaluation,
+      statusSummary: `${evaluation.statusSummary} · ${trainingPendingMessage}`,
+    };
+  }
+
+  // 2. Verificar Integraciones API Externas en Tiempo Real (Clínicas EMO y Pólizas SCTR Salud/Pensión/Vida Ley)
+  if (worker.integrationRecords && worker.integrationRecords.length > 0) {
+    const now = new Date();
+    const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const integrationBlocks: string[] = [];
+
+    for (const rec of worker.integrationRecords) {
+      const exp = rec.expiresAt.getTime() < todayStart.getTime();
+      if (rec.providerType === 'CLINIC_EMO') {
+        if (rec.status === 'NO_APTO') {
+          integrationBlocks.push('Clínica EMO reporta NO_APTO');
+        } else if (exp) {
+          integrationBlocks.push(`EMO vencido (${rec.expiresAt.toISOString().split('T')[0]})`);
+        }
+      } else {
+        if (rec.status !== 'ACTIVA') {
+          integrationBlocks.push(`Póliza ${rec.providerType} en estado ${rec.status}`);
+        } else if (exp) {
+          integrationBlocks.push(`Póliza ${rec.providerType} vencida (${rec.expiresAt.toISOString().split('T')[0]})`);
+        }
+      }
+    }
+
+    if (integrationBlocks.length > 0) {
+      evaluation = {
+        trafficLight: 'ROJO',
+        statusSummary: `REVOCACIÓN AUTOMÁTICA API EN TIEMPO REAL: ${integrationBlocks.join(' · ')}. Carné QR inhabilitado en Garita.`,
+        shouldIssueQr: false,
+        phase1Passed: evaluation.phase1Passed,
+      };
+    }
+  }
 
   await prisma.worker.update({
     where: { id: worker.id },
@@ -201,6 +283,97 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
       },
       elearningAttempts: { orderBy: { attemptedAt: 'desc' } },
       digitalBadge: true,
+      integrationRecords: { orderBy: { providerType: 'asc' } },
+      trainingProgress: { include: { module: true } },
+      vrSessions: { orderBy: { createdAt: 'desc' } },
+      biometricLogs: { orderBy: { createdAt: 'desc' }, take: 20 },
+      auditLogs: { orderBy: { createdAt: 'desc' } },
+    },
+  });
+}
+
+/**
+ * Permite a SSOMA emitir o revocar manualmente la habilitación y el Pase QR desde la Torre de Control.
+ */
+export async function manualOverrideWorkerTrafficLight(params: {
+  workerId: string;
+  action: 'GRANT_GREEN' | 'REVOKE_RED';
+  reviewerName: string;
+  reason: string;
+}) {
+  const worker = await prisma.worker.findUnique({
+    where: { id: params.workerId },
+    include: { contractor: true, digitalBadge: true },
+  });
+  if (!worker) throw new Error('Trabajador no encontrado');
+
+  if (params.action === 'REVOKE_RED') {
+    await prisma.worker.update({
+      where: { id: worker.id },
+      data: {
+        trafficLight: 'ROJO',
+        statusSummary: `REVOCADO POR TORRE DE CONTROL SSOMA (${params.reviewerName}): ${params.reason}`,
+      },
+    });
+  } else {
+    const minExpiry = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000);
+    const badgeCode = worker.digitalBadge?.badgeCode || `BZT-${worker.dni}-${Date.now().toString().slice(-4)}`;
+    const payloadObj = {
+      badgeCode,
+      dni: worker.dni,
+      fullName: worker.fullName,
+      companyName: worker.contractor.companyName,
+      jobPosition: worker.jobPosition,
+      stayType: worker.stayType,
+      accessZone: worker.accessZone,
+      trafficLight: 'VERDE',
+      validUntil: minExpiry.toISOString().split('T')[0],
+    };
+    const qrPayloadJson = JSON.stringify(payloadObj);
+    const secret = process.env.QR_SIGNING_SECRET || 'bateas-zerotouch-myopia-2026';
+    const signatureHash = crypto.createHmac('sha256', secret).update(qrPayloadJson).digest('hex');
+
+    await prisma.digitalBadgeQr.upsert({
+      where: { workerId: worker.id },
+      update: { qrPayloadJson, signatureHash, validUntil: minExpiry },
+      create: {
+        workerId: worker.id,
+        badgeCode,
+        qrPayloadJson,
+        signatureHash,
+        pvcPrintStatus: 'QUEUED_GARITA',
+        validUntil: minExpiry,
+      },
+    });
+
+    await prisma.worker.update({
+      where: { id: worker.id },
+      data: {
+        trafficLight: 'VERDE',
+        elearningPassed: true,
+        statusSummary: `HABILITADO POR TORRE DE CONTROL SSOMA (${params.reviewerName}): ${params.reason}`,
+      },
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      workerId: worker.id,
+      actorArea: 'TORRE_CONTROL_SSOMA',
+      action: params.action === 'GRANT_GREEN' ? 'EMISION_MANUAL_PASE_QR' : 'REVOCACION_MANUAL_PASE_QR',
+      details: `${params.reviewerName}: ${params.reason}`,
+    },
+  });
+
+  return prisma.worker.findUnique({
+    where: { id: worker.id },
+    include: {
+      contractor: true,
+      documents: { include: { requirement: true } },
+      digitalBadge: true,
+      integrationRecords: true,
+      trainingProgress: { include: { module: true } },
+      vrSessions: true,
       auditLogs: { orderBy: { createdAt: 'desc' } },
     },
   });

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
+  Activity,
   AlertTriangle,
   Award,
   BarChart3,
@@ -40,9 +41,14 @@ import {
   UserCircle2,
   UserPlus,
   Users,
+  Webhook,
   X,
   XCircle,
 } from 'lucide-react';
+import { AuthUser } from './types/bateas';
+import { BiometricModal } from './components/BiometricModal';
+import { WorkerPortal } from './components/WorkerPortal';
+import { SsomaControlPanels } from './components/SsomaControlPanels';
 
 type TrafficLight = 'VERDE' | 'AMBAR' | 'ROJO';
 type DocStatus = 'PENDIENTE' | 'VERDE' | 'AMBAR' | 'ROJO';
@@ -55,7 +61,10 @@ type NavSection =
   | 'AFILIACION_ELEARNING'
   | 'AFILIACION_DOCS_ESTADIA'
   | 'AFILIACION_LISTA_NEGRA'
-  | 'ACCESOS_CARNET_QR';
+  | 'ACCESOS_CARNET_QR'
+  | 'SSOMA_CMS_CAPACITACION'
+  | 'SSOMA_TORRE_CONTROL'
+  | 'SSOMA_INTEGRACIONES';
 
 interface Requirement {
   id: string;
@@ -142,19 +151,16 @@ interface QuizQuestion {
 
 export default function App() {
   // Estado de Autenticación Corporativa (Login RBAC)
-  const [authUser, setAuthUser] = useState<{
-    username: string;
-    role: 'ADMIN_ECM' | 'SSOMA_DHO' | 'GARITA';
-    fullName: string;
-    areaLabel: string;
-    token: string;
-  } | null>(() => {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       if (params.get('autologin') === '1') {
         return {
           username: 'ssoma@bateas.pe',
           role: 'SSOMA_DHO',
+          strictRole: 'SSOMA',
+          workerId: null,
+          workerDni: null,
           fullName: 'Esp. Víctor Cayata (DHO / SSOMA)',
           areaLabel: 'Auditoría Interna Minera Bateas',
           token: 'demo-token',
@@ -166,6 +172,8 @@ export default function App() {
       return null;
     }
   });
+  const [pendingBiometricUser, setPendingBiometricUser] = useState<AuthUser | null>(null);
+  const [accessDeniedMsg, setAccessDeniedMsg] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState<string>('ssoma@bateas.pe');
   const [loginPassword, setLoginPassword] = useState<string>('Bateas2026!');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -250,6 +258,56 @@ export default function App() {
     setTimeout(() => setToast(null), 5500);
   };
 
+  // ProtectedRoute / Bloqueo de rutas por URL directa según Rol (Módulo 1)
+  useEffect(() => {
+    const enforceRouteByRole = () => {
+      if (!authUser) return;
+      const path = window.location.pathname.toLowerCase();
+      const strictRole = authUser.strictRole || (authUser.role === 'SSOMA_DHO' ? 'SSOMA' : authUser.role === 'ADMIN_ECM' ? 'ECM' : 'GARITA');
+
+      if (strictRole === 'TRABAJADOR') {
+        if (
+          path.startsWith('/admin') ||
+          path.startsWith('/ssoma') ||
+          path.startsWith('/configuracion') ||
+          path.startsWith('/ecm') ||
+          path.startsWith('/garita')
+        ) {
+          window.history.replaceState(null, '', '/portal-trabajador');
+          setAccessDeniedMsg(
+            `Acceso Denegado (RBAC): La ruta "${path}" es exclusiva para personal administrativo. Has sido redirigido a tu Portal del Trabajador.`
+          );
+        } else if (path === '/' || path === '') {
+          window.history.replaceState(null, '', '/portal-trabajador');
+        }
+      }
+    };
+
+    enforceRouteByRole();
+    window.addEventListener('popstate', enforceRouteByRole);
+    return () => window.removeEventListener('popstate', enforceRouteByRole);
+  }, [authUser]);
+
+  const completeLoginSession = (userObj: AuthUser) => {
+    setAuthUser(userObj);
+    sessionStorage.setItem('bateas_auth_user', JSON.stringify(userObj));
+    if (userObj.strictRole === 'TRABAJADOR') {
+      window.history.replaceState(null, '', '/portal-trabajador');
+    } else if (userObj.strictRole === 'ECM' || userObj.role === 'ADMIN_ECM') {
+      setActiveRoleLabel('ADMIN_ECM');
+      setActiveNav('AFILIACION_AFILIADOS');
+      window.history.replaceState(null, '', '/ecm/afiliados');
+    } else if (userObj.strictRole === 'GARITA' || userObj.role === 'GARITA') {
+      setActiveRoleLabel('GARITA');
+      setActiveNav('ACCESOS_CARNET_QR');
+      window.history.replaceState(null, '', '/garita/accesos');
+    } else {
+      setActiveRoleLabel('SSOMA_DHO');
+      setActiveNav('INICIO_ACCESO_DIRECTO');
+      window.history.replaceState(null, '', '/admin/panel');
+    }
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -262,12 +320,12 @@ export default function App() {
       }).then((r) => r.json());
 
       if (res.success) {
-        setAuthUser(res.data);
-        sessionStorage.setItem('bateas_auth_user', JSON.stringify(res.data));
-        setActiveRoleLabel(res.data.role);
-        if (res.data.role === 'ADMIN_ECM') setActiveNav('AFILIACION_AFILIADOS');
-        else if (res.data.role === 'SSOMA_DHO') setActiveNav('INICIO_ACCESO_DIRECTO');
-        else if (res.data.role === 'GARITA') setActiveNav('ACCESOS_CARNET_QR');
+        if (res.data.strictRole === 'TRABAJADOR' && res.data.workerId) {
+          // Módulo 3: Verificación Biométrica Facial obligatoria al iniciar sesión como TRABAJADOR
+          setPendingBiometricUser(res.data);
+        } else {
+          completeLoginSession(res.data);
+        }
       } else {
         setLoginError(res.error || 'Error de autenticación');
       }
@@ -280,7 +338,10 @@ export default function App() {
 
   const handleLogout = () => {
     setAuthUser(null);
+    setPendingBiometricUser(null);
+    setAccessDeniedMsg(null);
     sessionStorage.removeItem('bateas_auth_user');
+    window.history.replaceState(null, '', '/');
   };
 
   const fetchAllData = async (keepSelectionId?: string) => {
@@ -798,6 +859,12 @@ export default function App() {
         return 'Inicio / Afiliación / Lista negra';
       case 'ACCESOS_CARNET_QR':
         return 'Inicio / Control de accesos / Carné Digital QR y Fotocheck PVC';
+      case 'SSOMA_CMS_CAPACITACION':
+        return 'Inicio / Administración SSOMA / Gestor CMS de Capacitación (32 Horas)';
+      case 'SSOMA_TORRE_CONTROL':
+        return 'Inicio / Administración SSOMA / Torre de Control, Presencial (Días 3-4) y Biometría IA';
+      case 'SSOMA_INTEGRACIONES':
+        return 'Inicio / Administración SSOMA / Integraciones API (Clínicas EMO & Aseguradoras)';
     }
   };
 
@@ -860,7 +927,7 @@ export default function App() {
               <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">
                 Accesos Rápidos de Demostración (1-Clic)
               </p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -906,6 +973,21 @@ export default function App() {
                   🚧 Garita QR
                   <span className="block text-[10px] text-slate-400 font-normal">garita@bateas.pe</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginUsername('trabajador@bateas.pe');
+                    setLoginPassword('Bateas2026!');
+                  }}
+                  className={`p-2 rounded border text-center transition cursor-pointer ${
+                    loginUsername === 'trabajador@bateas.pe'
+                      ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  🪪 Trabajador (Bio + RV)
+                  <span className="block text-[10px] text-slate-400 font-normal">trabajador@bateas.pe</span>
+                </button>
               </div>
               <p className="text-[11px] text-center text-slate-400">
                 Contraseña de prueba: <strong>Bateas2026!</strong>
@@ -913,7 +995,33 @@ export default function App() {
             </div>
           </form>
         </div>
+
+        {pendingBiometricUser && pendingBiometricUser.workerId && (
+          <BiometricModal
+            workerId={pendingBiometricUser.workerId}
+            workerName={pendingBiometricUser.fullName}
+            token={pendingBiometricUser.token}
+            onSuccess={() => {
+              const u = pendingBiometricUser;
+              setPendingBiometricUser(null);
+              completeLoginSession(u);
+            }}
+            onCancel={() => setPendingBiometricUser(null)}
+          />
+        )}
       </div>
+    );
+  }
+
+  // MÓDULO 1: Interfaz Aislada del Rol TRABAJADOR (Sin Sidebar Administrativo)
+  if (authUser.strictRole === 'TRABAJADOR') {
+    return (
+      <WorkerPortal
+        authUser={authUser}
+        accessDeniedMessage={accessDeniedMsg}
+        onDismissAccessDenied={() => setAccessDeniedMsg(null)}
+        onLogout={handleLogout}
+      />
     );
   }
 
@@ -1063,6 +1171,53 @@ export default function App() {
           >
             <BarChart3 className="w-4 h-4 text-emerald-400" />
             <span>Panel de Control (KPIs)</span>
+          </button>
+
+          {/* Módulos Administrativos SSOMA (D.S. 024-2016-EM, Biometría, Integraciones & RV) */}
+          <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
+            <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-bold mb-1.5">
+              Torre SSOMA · D.S. 024-2016-EM
+            </p>
+          </div>
+          <button
+            onClick={() => setActiveNav('SSOMA_TORRE_CONTROL')}
+            className={`w-full px-4 py-2.5 flex items-center justify-between transition cursor-pointer ${
+              activeNav === 'SSOMA_TORRE_CONTROL'
+                ? 'bg-[#1e282c] text-white border-l-4 border-amber-400 font-bold'
+                : 'hover:bg-[#1e282c] text-slate-300'
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Activity className="w-4 h-4 text-amber-400" />
+              <span>Torre Control 32h / Bio</span>
+            </span>
+            {metrics?.biometricIncidentsCount > 0 && (
+              <span className="text-[10px] bg-rose-500 text-white font-bold px-1.5 rounded-full">
+                {metrics.biometricIncidentsCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveNav('SSOMA_CMS_CAPACITACION')}
+            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+              activeNav === 'SSOMA_CMS_CAPACITACION'
+                ? 'bg-[#1e282c] text-white border-l-4 border-indigo-400 font-bold'
+                : 'hover:bg-[#1e282c] text-slate-300'
+            }`}
+          >
+            <BookOpen className="w-4 h-4 text-indigo-400" />
+            <span>CMS Capacitación 32h</span>
+          </button>
+          <button
+            onClick={() => setActiveNav('SSOMA_INTEGRACIONES')}
+            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+              activeNav === 'SSOMA_INTEGRACIONES'
+                ? 'bg-[#1e282c] text-white border-l-4 border-sky-400 font-bold'
+                : 'hover:bg-[#1e282c] text-slate-300'
+            }`}
+          >
+            <Webhook className="w-4 h-4 text-sky-400" />
+            <span>Integraciones EMO/SCTR</span>
           </button>
 
           <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
@@ -2613,6 +2768,36 @@ export default function App() {
           {/* ----------------------------------------------------------------------
               VISTA 6: AULA WEB E-LEARNING ASÍNCRONA 24/7
           ---------------------------------------------------------------------- */}
+          {activeNav === 'SSOMA_CMS_CAPACITACION' && (
+            <SsomaControlPanels
+              mode="CMS"
+              workers={workers}
+              token={authUser.token}
+              onRefreshAll={fetchAllData}
+              onNotice={showNotice}
+            />
+          )}
+
+          {activeNav === 'SSOMA_TORRE_CONTROL' && (
+            <SsomaControlPanels
+              mode="CONTROL_TOWER"
+              workers={workers}
+              token={authUser.token}
+              onRefreshAll={fetchAllData}
+              onNotice={showNotice}
+            />
+          )}
+
+          {activeNav === 'SSOMA_INTEGRACIONES' && (
+            <SsomaControlPanels
+              mode="INTEGRATIONS"
+              workers={workers}
+              token={authUser.token}
+              onRefreshAll={fetchAllData}
+              onNotice={showNotice}
+            />
+          )}
+
           {activeNav === 'AFILIACION_ELEARNING' && selectedWorker && (
             <div className="bg-white rounded border border-slate-200 shadow-2xs p-6 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-4">

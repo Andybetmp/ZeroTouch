@@ -61,6 +61,31 @@ enum PvcPrintStatus {
   DELIVERED
 }
 
+enum Role {
+  SSOMA
+  ECM
+  GARITA
+  TRABAJADOR
+}
+
+enum TrainingModality {
+  ELEARNING
+  PRESENTIAL
+  VR
+}
+
+enum BiometricSessionType {
+  LOGIN
+  PROCTORING
+}
+
+enum ExternalProviderType {
+  CLINIC_EMO
+  SCTR_SALUD
+  SCTR_PENSION
+  VIDA_LEY
+}
+
 model ContractorEcm {
   id          String   @id @default(uuid()) @db.Uuid
   ruc         String   @unique @db.VarChar(11)
@@ -99,27 +124,166 @@ model StayTypeRequirement {
 }
 
 model Worker {
-  id                String             @id @default(uuid()) @db.Uuid
-  dni               String             @unique @db.VarChar(15)
-  fullName          String             @map("full_name") @db.VarChar(150)
-  contractorId      String             @map("contractor_id") @db.Uuid
-  contractor        ContractorEcm      @relation(fields: [contractorId], references: [id])
-  jobPosition       JobPosition        @map("job_position")
-  stayType          StayType           @default(PERMANENTE_CIA) @map("stay_type")
-  accessZone        AccessZone         @default(SUPERFICIE) @map("access_zone")
-  trafficLight      TrafficLightStatus @default(AMBAR) @map("traffic_light")
-  statusSummary     String             @map("status_summary") @db.VarChar(255)
-  isBlacklisted     Boolean            @default(false) @map("is_blacklisted")
-  elearningPassed   Boolean            @default(false) @map("elearning_passed")
-  sessionCode       String             @map("session_code") @db.VarChar(20)
-  createdAt         DateTime           @default(now()) @map("created_at")
-  updatedAt         DateTime           @updatedAt @map("updated_at")
-  documents         WorkerDocument[]
-  elearningAttempts ElearningAttempt[]
-  digitalBadge      DigitalBadgeQr?
-  auditLogs         AuditLog[]
+  id                 String                      @id @default(uuid()) @db.Uuid
+  dni                String                      @unique @db.VarChar(15)
+  fullName           String                      @map("full_name") @db.VarChar(150)
+  photoUrl           String?                     @map("photo_url") @db.Text
+  contractorId       String                      @map("contractor_id") @db.Uuid
+  contractor         ContractorEcm               @relation(fields: [contractorId], references: [id])
+  jobPosition        JobPosition                 @map("job_position")
+  stayType           StayType                    @default(PERMANENTE_CIA) @map("stay_type")
+  accessZone         AccessZone                  @default(SUPERFICIE) @map("access_zone")
+  trafficLight       TrafficLightStatus          @default(AMBAR) @map("traffic_light")
+  statusSummary      String                      @map("status_summary") @db.VarChar(255)
+  isBlacklisted      Boolean                     @default(false) @map("is_blacklisted")
+  elearningPassed    Boolean                     @default(false) @map("elearning_passed")
+  sessionCode        String                      @map("session_code") @db.VarChar(20)
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+  documents          WorkerDocument[]
+  elearningAttempts  ElearningAttempt[]
+  digitalBadge       DigitalBadgeQr?
+  auditLogs          AuditLog[]
+  users              User[]
+  trainingProgress   WorkerTrainingProgress[]
+  biometricLogs      BiometricAuditLog[]
+  integrationRecords ExternalIntegrationRecord[]
+  vrSessions         VrSimulationSession[]
 
   @@map("workers")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(150)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  role         Role     @default(TRABAJADOR)
+  fullName     String   @map("full_name") @db.VarChar(150)
+  areaLabel    String   @default("Portal del Trabajador") @map("area_label") @db.VarChar(150)
+  workerId     String?  @map("worker_id") @db.Uuid
+  worker       Worker?  @relation(fields: [workerId], references: [id], onDelete: SetNull)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}
+
+model TrainingCourse {
+  id          String           @id @default(uuid()) @db.Uuid
+  code        String           @unique @db.VarChar(40)
+  title       String           @db.VarChar(180)
+  description String           @db.Text
+  totalHours  Int              @default(32) @map("total_hours")
+  isActive    Boolean          @default(true) @map("is_active")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  modules     TrainingModule[]
+
+  @@map("training_courses")
+}
+
+model TrainingModule {
+  id            String                   @id @default(uuid()) @db.Uuid
+  courseId      String                   @map("course_id") @db.Uuid
+  course        TrainingCourse           @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  code          String                   @unique @db.VarChar(50)
+  title         String                   @db.VarChar(180)
+  description   String                   @db.Text
+  videoUrl      String?                  @map("video_url") @db.Text
+  dayNumber     Int                      @map("day_number") // 1..4
+  modality      TrainingModality         @default(ELEARNING)
+  requiredHours Int                      @default(8) @map("required_hours")
+  jobSpecialty  JobPosition?             @map("job_specialty") // null = transversal a todos los puestos
+  orderIndex    Int                      @default(1) @map("order_index")
+  isActive      Boolean                  @default(true) @map("is_active")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  questions     TrainingQuestion[]
+  progress      WorkerTrainingProgress[]
+  biometricLogs BiometricAuditLog[]
+
+  @@map("training_modules")
+}
+
+model TrainingQuestion {
+  id           String         @id @default(uuid()) @db.Uuid
+  moduleId     String         @map("module_id") @db.Uuid
+  module       TrainingModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  questionText String         @map("question_text") @db.Text
+  optionsJson  String         @map("options_json") @db.Text
+  correctIndex Int            @map("correct_index")
+  isActive     Boolean        @default(true) @map("is_active")
+
+  @@map("training_questions")
+}
+
+model WorkerTrainingProgress {
+  id                   String         @id @default(uuid()) @db.Uuid
+  workerId             String         @map("worker_id") @db.Uuid
+  worker               Worker         @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  moduleId             String         @map("module_id") @db.Uuid
+  module               TrainingModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  completedSeconds     Int            @default(0) @map("completed_seconds")
+  requiredSeconds      Int            @default(28800) @map("required_seconds") // 8h = 28800s
+  status               String         @default("PENDING") @db.VarChar(30) // PENDING, IN_PROGRESS, COMPLETED, FAILED
+  examScore            Int?           @map("exam_score")
+  scheduledDate        String?        @map("scheduled_date") @db.VarChar(40)
+  scheduledShift       String?        @map("scheduled_shift") @db.VarChar(40)
+  attendanceVerifiedBy String?        @map("attendance_verified_by") @db.VarChar(120)
+  practicalScore       Int?           @map("practical_score") // 0-20 (min 14)
+  observations         String?        @db.Text
+  completedAt          DateTime?      @map("completed_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+
+  @@unique([workerId, moduleId])
+  @@map("worker_training_progress")
+}
+
+model BiometricAuditLog {
+  id              String               @id @default(uuid()) @db.Uuid
+  workerId        String               @map("worker_id") @db.Uuid
+  worker          Worker               @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  sessionType     BiometricSessionType @map("session_type")
+  eventType       String               @map("event_type") @db.VarChar(60) // VERIFIED_OK, NO_FACE_DETECTED, MULTIPLE_FACES, IDENTITY_MISMATCH, CAMERA_BLOCKED_OR_DENIED
+  confidenceScore Float                @default(0) @map("confidence_score")
+  details         String?              @db.Text
+  moduleId        String?              @map("module_id") @db.Uuid
+  module          TrainingModule?      @relation(fields: [moduleId], references: [id], onDelete: SetNull)
+  createdAt       DateTime             @default(now()) @map("created_at")
+
+  @@map("biometric_audit_logs")
+}
+
+model ExternalIntegrationRecord {
+  id             String               @id @default(uuid()) @db.Uuid
+  workerId       String               @map("worker_id") @db.Uuid
+  worker         Worker               @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  providerType   ExternalProviderType @map("provider_type")
+  providerName   String               @map("provider_name") @db.VarChar(150)
+  status         String               @db.VarChar(40) // APTO, APTO_CON_RESTRICCIONES, NO_APTO, ACTIVA, VENCIDA, SUSPENDIDA
+  restrictions   String?              @db.Text
+  policyNumber   String?              @map("policy_number") @db.VarChar(80)
+  expiresAt      DateTime             @map("expires_at") @db.Date
+  lastSyncedAt   DateTime             @default(now()) @map("last_synced_at")
+  rawPayloadJson String?              @map("raw_payload_json") @db.Text
+
+  @@unique([workerId, providerType])
+  @@map("external_integration_records")
+}
+
+model VrSimulationSession {
+  id                 String    @id @default(uuid()) @db.Uuid
+  workerId           String    @map("worker_id") @db.Uuid
+  worker             Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  pairingCode        String?   @map("pairing_code") @db.VarChar(12)
+  scenarioCode       String    @map("scenario_code") @db.VarChar(50) // SCALING_ROCK, GAS_VENTILATION, HEAVY_MACHINERY, LOTO_LOCKOUT
+  score              Int       @default(0)
+  criticalErrorsJson String    @default("[]") @map("critical_errors_json") @db.Text
+  passed             Boolean   @default(false)
+  durationSeconds    Int       @default(0) @map("duration_seconds")
+  syncedToPractical  Boolean   @default(false) @map("synced_to_practical")
+  completedAt        DateTime? @map("completed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  @@map("vr_simulation_sessions")
 }
 
 model WorkerDocument {

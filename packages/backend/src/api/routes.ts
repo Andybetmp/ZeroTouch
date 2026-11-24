@@ -8,62 +8,154 @@ import {
   resolveExceptionTicketWorkflow,
   submitElearningAttemptWorkflow,
 } from '../services/workflow.service.js';
-import { verifyGaritaBadgeOrDni } from '../services/trafficLight.service.js';
+import {
+  manualOverrideWorkerTrafficLight,
+  verifyGaritaBadgeOrDni,
+} from '../services/trafficLight.service.js';
 import { analyzeDocumentWithGeminiAi, askBateasAiCopilot } from '../services/ai.service.js';
+import {
+  encodeAuthToken,
+  extractAuthMiddleware,
+  requireRole,
+} from '../middleware/rbac.middleware.js';
+import {
+  ensureWorkerTrainingPlan,
+  getWorkerTrainingRoadmap,
+  recordModuleWatchProgress,
+  recordPresentialTrainingBySsoma,
+  submitModuleExam,
+  upsertTrainingModuleCms,
+} from '../services/training.service.js';
+import {
+  listBiometricAuditLogs,
+  verifyBiometricFrame,
+} from '../services/biometrics.service.js';
+import {
+  ensureWorkerExternalIntegrations,
+  syncClinicEmoRecord,
+  syncInsurerPolicyRecord,
+} from '../services/integrations.service.js';
+import {
+  completeVrSimulationSession,
+  generateVrPairingCode,
+  VR_SOCAVON_SCENARIOS,
+} from '../services/vr.service.js';
 
 export const apiRouter = Router();
+apiRouter.use(extractAuthMiddleware);
 
-// Cuentas corporativas autorizadas para demostración y pruebas del cliente (RBAC)
+// Cuentas corporativas autorizadas para demostración y pruebas (RBAC: SSOMA, ECM, GARITA, TRABAJADOR)
 const DEMO_USERS = [
   {
     username: 'ecm@bateas.pe',
     password: process.env.DEMO_PASSWORD_ECM || 'Bateas2026!',
-    role: 'ADMIN_ECM',
+    role: 'ECM' as const,
+    legacyRoleLabel: 'ADMIN_ECM',
     fullName: 'Ing. Roberto Salazar (Admin ECM)',
     areaLabel: 'Empresa Contratista Minera (ECM)',
+    defaultWorkerDni: null,
   },
   {
     username: 'ssoma@bateas.pe',
     password: process.env.DEMO_PASSWORD_SSOMA || 'Bateas2026!',
-    role: 'SSOMA_DHO',
+    role: 'SSOMA' as const,
+    legacyRoleLabel: 'SSOMA_DHO',
     fullName: 'Esp. Víctor Cayata (DHO / SSOMA)',
     areaLabel: 'Auditoría Interna Minera Bateas (SSOMA / Médico / DHO)',
+    defaultWorkerDni: null,
   },
   {
     username: 'garita@bateas.pe',
     password: process.env.DEMO_PASSWORD_GARITA || 'Bateas2026!',
-    role: 'GARITA',
+    role: 'GARITA' as const,
+    legacyRoleLabel: 'GARITA',
     fullName: 'Sup. Control Patrimonial Garita',
     areaLabel: 'Control de Accesos y Fotocheck PVC',
+    defaultWorkerDni: null,
+  },
+  {
+    username: 'trabajador@bateas.pe',
+    password: process.env.DEMO_PASSWORD_WORKER || 'Bateas2026!',
+    role: 'TRABAJADOR' as const,
+    legacyRoleLabel: 'TRABAJADOR',
+    fullName: 'Jorge Luis Huamán Condori (Trabajador Contratista)',
+    areaLabel: 'Portal Exclusivo del Trabajador (Ruta 32h / Biometría / RV)',
+    defaultWorkerDni: '45812034',
   },
 ];
 
-apiRouter.post('/auth/login', (req, res) => {
-  const { username, password } = req.body || {};
-  const found = DEMO_USERS.find(
-    (u) =>
-      u.username.toLowerCase() === String(username || '').trim().toLowerCase() &&
-      u.password === String(password || '').trim()
-  );
+apiRouter.post('/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const emailClean = String(username || '').trim().toLowerCase();
+    const passClean = String(password || '').trim();
 
-  if (!found) {
-    res.status(401).json({
-      success: false,
-      error: 'Credenciales inválidas. Verifique su correo corporativo y contraseña.',
+    // 1. Buscar en tabla User de PostgreSQL
+    let dbUser = await prisma.user.findUnique({
+      where: { email: emailClean },
+      include: { worker: true },
     });
-    return;
-  }
 
-  res.json({
-    success: true,
-    data: {
-      username: found.username,
-      role: found.role,
-      fullName: found.fullName,
-      areaLabel: found.areaLabel,
-      token: Buffer.from(`${found.username}:${found.role}:${Date.now()}`).toString('base64'),
-    },
-  });
+    const preset = DEMO_USERS.find((u) => u.username.toLowerCase() === emailClean);
+
+    if (!dbUser && !preset) {
+      res.status(401).json({
+        success: false,
+        error: 'Credenciales inválidas. Verifique su correo corporativo y contraseña.',
+      });
+      return;
+    }
+
+    const expectedPassword = dbUser ? dbUser.passwordHash : preset!.password;
+    if (passClean !== expectedPassword) {
+      res.status(401).json({
+        success: false,
+        error: 'Contraseña incorrecta para la cuenta corporativa seleccionada.',
+      });
+      return;
+    }
+
+    let workerId = dbUser?.workerId || null;
+    let workerDni = dbUser?.worker?.dni || preset?.defaultWorkerDni || null;
+
+    if (!workerId && preset?.role === 'TRABAJADOR') {
+      const targetWorker =
+        (workerDni ? await prisma.worker.findUnique({ where: { dni: workerDni } }) : null) ||
+        (await prisma.worker.findFirst({ orderBy: { createdAt: 'desc' } }));
+      if (targetWorker) {
+        workerId = targetWorker.id;
+        workerDni = targetWorker.dni;
+      }
+    }
+
+    const role = dbUser ? dbUser.role : preset!.role;
+    const fullName = dbUser ? dbUser.fullName : preset!.fullName;
+    const areaLabel = dbUser ? dbUser.areaLabel : preset!.areaLabel;
+
+    const token = encodeAuthToken({
+      email: emailClean,
+      role,
+      workerId,
+      fullName,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        username: emailClean,
+        role: preset ? preset.legacyRoleLabel : role,
+        strictRole: role,
+        workerId,
+        workerDni,
+        requiresBiometricLogin: role === 'TRABAJADOR',
+        fullName,
+        areaLabel,
+        token,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 const upload = multer({
@@ -87,6 +179,7 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
       zeroTouchDocs,
       queuedPvcCount,
       expiringSoonDocsCount,
+      biometricIncidentsCount,
     ] = await Promise.all([
       prisma.worker.count(),
       prisma.worker.count({ where: { trafficLight: 'VERDE' } }),
@@ -109,6 +202,9 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
           },
         },
       }),
+      prisma.biometricAuditLog.count({
+        where: { eventType: { not: 'VERIFIED_OK' } },
+      }),
     ]);
 
     res.json({
@@ -125,6 +221,7 @@ apiRouter.get('/dashboard/metrics', async (_req, res) => {
           totalAnalyzedDocs > 0 ? Math.round((zeroTouchDocs / totalAnalyzedDocs) * 100) : 0,
         queuedPvcCount,
         expiringSoonDocsCount,
+        biometricIncidentsCount,
       },
     });
   } catch (err: any) {
@@ -155,7 +252,7 @@ apiRouter.get('/masters/blacklist', async (_req, res) => {
   }
 });
 
-apiRouter.post('/masters/blacklist', async (req, res) => {
+apiRouter.post('/masters/blacklist', requireRole(['SSOMA']), async (req, res) => {
   try {
     const { dni, fullName, reason } = req.body;
     const entry = await prisma.blacklistEntry.upsert({
@@ -170,9 +267,16 @@ apiRouter.post('/masters/blacklist', async (req, res) => {
 });
 
 // 3. Trabajadores y Expedientes
-apiRouter.get('/workers', async (_req, res) => {
+apiRouter.get('/workers', async (req, res) => {
   try {
+    // Si el usuario autenticado es TRABAJADOR, filtrar estrictamente solo su propio registro
+    const whereClause =
+      req.authUser?.role === 'TRABAJADOR' && req.authUser.workerId
+        ? { id: req.authUser.workerId }
+        : undefined;
+
     const workers = await prisma.worker.findMany({
+      where: whereClause,
       include: {
         contractor: true,
         documents: {
@@ -184,7 +288,14 @@ apiRouter.get('/workers', async (_req, res) => {
         },
         elearningAttempts: { orderBy: { attemptedAt: 'desc' } },
         digitalBadge: true,
-        auditLogs: { orderBy: { createdAt: 'desc' }, take: 20 },
+        integrationRecords: { orderBy: { providerType: 'asc' } },
+        trainingProgress: {
+          include: { module: true },
+          orderBy: { module: { dayNumber: 'asc' } },
+        },
+        vrSessions: { orderBy: { createdAt: 'desc' } },
+        biometricLogs: { orderBy: { createdAt: 'desc' }, take: 15 },
+        auditLogs: { orderBy: { createdAt: 'desc' }, take: 25 },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -196,6 +307,18 @@ apiRouter.get('/workers', async (_req, res) => {
 
 apiRouter.get('/workers/:id', async (req, res) => {
   try {
+    if (
+      req.authUser?.role === 'TRABAJADOR' &&
+      req.authUser.workerId &&
+      req.params.id !== req.authUser.workerId
+    ) {
+      res.status(403).json({
+        success: false,
+        error: 'Acceso Denegado (RBAC): Un trabajador solo puede consultar su propio expediente.',
+      });
+      return;
+    }
+
     const worker = await prisma.worker.findUnique({
       where: { id: req.params.id },
       include: {
@@ -209,6 +332,13 @@ apiRouter.get('/workers/:id', async (req, res) => {
         },
         elearningAttempts: { orderBy: { attemptedAt: 'desc' } },
         digitalBadge: true,
+        integrationRecords: { orderBy: { providerType: 'asc' } },
+        trainingProgress: {
+          include: { module: true },
+          orderBy: { module: { dayNumber: 'asc' } },
+        },
+        vrSessions: { orderBy: { createdAt: 'desc' } },
+        biometricLogs: { orderBy: { createdAt: 'desc' }, take: 20 },
         auditLogs: { orderBy: { createdAt: 'desc' } },
       },
     });
@@ -222,9 +352,13 @@ apiRouter.get('/workers/:id', async (req, res) => {
   }
 });
 
-apiRouter.post('/workers', async (req, res) => {
+apiRouter.post('/workers', requireRole(['SSOMA', 'ECM']), async (req, res) => {
   try {
     const worker = await registerWorkerWorkflow(req.body);
+    if (worker) {
+      await ensureWorkerTrainingPlan(worker.id);
+      await ensureWorkerExternalIntegrations(worker.id);
+    }
     res.status(201).json({ success: true, data: worker });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
@@ -235,6 +369,10 @@ apiRouter.post('/workers/demo-preset', async (req, res) => {
   try {
     const { scenario } = req.body;
     const worker = await createDemoScenarioWorkflow(scenario);
+    if (worker) {
+      await ensureWorkerTrainingPlan(worker.id);
+      await ensureWorkerExternalIntegrations(worker.id);
+    }
     res.status(201).json({ success: true, data: worker });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
@@ -277,7 +415,7 @@ apiRouter.post(
 );
 
 // 5. Bandeja de Excepciones (SSOMA / Área Médica / DHO)
-apiRouter.get('/exceptions', async (req, res) => {
+apiRouter.get('/exceptions', requireRole(['SSOMA', 'ECM']), async (req, res) => {
   try {
     const area = req.query.area as string | undefined;
     const status = (req.query.status as string | undefined) || 'OPEN';
@@ -304,11 +442,11 @@ apiRouter.get('/exceptions', async (req, res) => {
   }
 });
 
-apiRouter.patch('/exceptions/:exceptionId/resolve', async (req, res) => {
+apiRouter.patch('/exceptions/:exceptionId/resolve', requireRole(['SSOMA']), async (req, res) => {
   try {
     const { decision, reviewerName, reviewerComment, manualExpiryDateStr } = req.body;
     const updatedWorker = await resolveExceptionTicketWorkflow({
-      exceptionId: req.params.exceptionId,
+      exceptionId: String(req.params.exceptionId),
       decision,
       reviewerName,
       reviewerComment,
@@ -320,7 +458,7 @@ apiRouter.patch('/exceptions/:exceptionId/resolve', async (req, res) => {
   }
 });
 
-// 6. E-Learning Asíncrono 24/7
+// 6. E-Learning Clásico (compatibilidad) + Nuevo Motor Híbrido 4 Días / 32 Horas (Módulo 2)
 apiRouter.get('/elearning/questions', async (_req, res) => {
   try {
     const questions = await prisma.quizQuestion.findMany({
@@ -365,6 +503,206 @@ apiRouter.post('/elearning/submit', async (req, res) => {
   }
 });
 
+// MÓDULO 2: Endpoints de Capacitación Híbrida 32 Horas (Días 1–4) y CMS SSOMA
+apiRouter.get('/training/roadmap/:workerId', async (req, res) => {
+  try {
+    const workerId = String(req.params.workerId);
+    await ensureWorkerTrainingPlan(workerId);
+    const roadmap = await getWorkerTrainingRoadmap(workerId);
+    res.json({ success: true, data: roadmap });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/training/progress/watch', async (req, res) => {
+  try {
+    const { workerId, moduleId, addedSeconds } = req.body;
+    const roadmap = await recordModuleWatchProgress({
+      workerId: String(workerId),
+      moduleId: String(moduleId),
+      addedSeconds: Number(addedSeconds || 3600),
+    });
+    res.json({ success: true, data: roadmap });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/training/progress/exam', async (req, res) => {
+  try {
+    const { workerId, moduleId, answers } = req.body;
+    const roadmap = await submitModuleExam({
+      workerId: String(workerId),
+      moduleId: String(moduleId),
+      answers: Array.isArray(answers) ? answers : [],
+    });
+    res.json({ success: true, data: roadmap });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/training/presential/record', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const {
+      workerId,
+      moduleId,
+      scheduledDate,
+      scheduledShift,
+      attendanceCompleted,
+      practicalScore,
+      attendanceVerifiedBy,
+      observations,
+    } = req.body;
+    const roadmap = await recordPresentialTrainingBySsoma({
+      workerId: String(workerId),
+      moduleId: String(moduleId),
+      scheduledDate,
+      scheduledShift,
+      attendanceCompleted: Boolean(attendanceCompleted),
+      practicalScore: Number(practicalScore ?? 16),
+      attendanceVerifiedBy: String(attendanceVerifiedBy || 'Instructor SSOMA Bateas'),
+      observations,
+    });
+    res.json({ success: true, data: roadmap });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/training/cms/modules', async (_req, res) => {
+  try {
+    const modules = await prisma.trainingModule.findMany({
+      include: { questions: true, course: true },
+      orderBy: [{ dayNumber: 'asc' }, { orderIndex: 'asc' }],
+    });
+    res.json({ success: true, data: modules });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/training/cms/modules', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const mod = await upsertTrainingModuleCms(req.body);
+    res.json({ success: true, data: mod });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/training/control-tower/override', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const { workerId, action, reviewerName, reason } = req.body;
+    const updated = await manualOverrideWorkerTrafficLight({
+      workerId: String(workerId),
+      action,
+      reviewerName: String(reviewerName || 'Torre de Control SSOMA'),
+      reason: String(reason || 'Decisión administrativa SSOMA'),
+    });
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// MÓDULO 3: Biometría Facial y Proctoring Continuo con IA
+apiRouter.post('/biometrics/verify', async (req, res) => {
+  try {
+    const result = await verifyBiometricFrame(req.body);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/biometrics/logs', async (req, res) => {
+  try {
+    const workerId = req.query.workerId as string | undefined;
+    const logs = await listBiometricAuditLogs(workerId);
+    res.json({ success: true, data: logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// MÓDULO 4: Integraciones API en Tiempo Real y Webhooks (Clínicas EMO & Aseguradoras SCTR/Vida Ley)
+apiRouter.get('/integrations/worker/:workerId', async (req, res) => {
+  try {
+    const records = await ensureWorkerExternalIntegrations(String(req.params.workerId));
+    res.json({ success: true, data: records });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/integrations/emo/sync/:dni', async (req, res) => {
+  try {
+    const result = await syncClinicEmoRecord({
+      dni: String(req.params.dni),
+      ...req.body,
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/webhooks/clinic-emo', async (req, res) => {
+  try {
+    const result = await syncClinicEmoRecord(req.body);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/integrations/policies/sync/:dni', async (req, res) => {
+  try {
+    const result = await syncInsurerPolicyRecord({
+      dni: String(req.params.dni),
+      ...req.body,
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/webhooks/insurer-policy', async (req, res) => {
+  try {
+    const result = await syncInsurerPolicyRecord(req.body);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// MÓDULO 5: Pasarela y Simulador de Entrenamiento RV para Socavón
+apiRouter.get('/vr/scenarios', (_req, res) => {
+  res.json({ success: true, data: VR_SOCAVON_SCENARIOS });
+});
+
+apiRouter.post('/vr/sessions/pair', async (req, res) => {
+  try {
+    const { workerId } = req.body;
+    const pairing = await generateVrPairingCode(String(workerId));
+    res.json({ success: true, data: pairing });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/vr/sessions/complete', async (req, res) => {
+  try {
+    const result = await completeVrSimulationSession(req.body);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 // 7. Carné Digital QR, Verificador Criptográfico en Garita y Cola de Fotocheck Físico PVC
 apiRouter.get('/badges/verify/:code', async (req, res) => {
   try {
@@ -374,6 +712,7 @@ apiRouter.get('/badges/verify/:code', async (req, res) => {
     res.status(400).json({ success: false, error: err.message });
   }
 });
+
 apiRouter.get('/badges', async (_req, res) => {
   try {
     const badges = await prisma.digitalBadgeQr.findMany({
@@ -394,7 +733,7 @@ apiRouter.patch('/badges/:badgeId/pvc-status', async (req, res) => {
   try {
     const { pvcPrintStatus } = req.body;
     const badge = await prisma.digitalBadgeQr.update({
-      where: { id: req.params.badgeId },
+      where: { id: String(req.params.badgeId) },
       data: { pvcPrintStatus },
       include: { worker: { include: { contractor: true } } },
     });
@@ -422,7 +761,7 @@ apiRouter.post('/ai/copilot', async (req, res) => {
 apiRouter.post('/ai/audit-document/:workerDocumentId', async (req, res) => {
   try {
     const doc = await prisma.workerDocument.findUnique({
-      where: { id: req.params.workerDocumentId },
+      where: { id: String(req.params.workerDocumentId) },
       include: { worker: true, requirement: true },
     });
     if (!doc) {
