@@ -118,6 +118,9 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
       trainingProgress: {
         include: { module: true },
       },
+      courseAssignments: {
+        include: { course: true },
+      },
       vrSessions: true,
     },
   });
@@ -169,6 +172,17 @@ export async function recalculateWorkerTrafficLight(workerId: string) {
       if (missingSteps.length > 0) {
         trainingPendingMessage = `Capacitación 32h pendiente (${missingSteps.join(', ')})`;
       }
+    }
+  }
+
+  // 1b. Verificar asignaciones CMS de Capacitación 4 Días (si el trabajador tiene asignaciones explícitas)
+  if (worker.courseAssignments && worker.courseAssignments.length > 0) {
+    const activeAssignments = worker.courseAssignments.filter((a) => a.course.isActive);
+    const pendingCourses = activeAssignments.filter((a) => a.status !== 'COMPLETED');
+    if (pendingCourses.length > 0) {
+      training32hReady = false;
+      const pendingDays = Array.from(new Set(pendingCourses.map((a) => `Día ${a.course.dayNumber}`))).sort();
+      trainingPendingMessage = `Capacitación 4 días pendiente (${pendingDays.join(', ')})`;
     }
   }
 

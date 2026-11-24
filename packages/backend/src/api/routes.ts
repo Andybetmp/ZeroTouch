@@ -31,6 +31,29 @@ import {
   verifyBiometricFrame,
 } from '../services/biometrics.service.js';
 import {
+  addCourseQuestion,
+  addCourseResource,
+  assignCoursesToWorkers,
+  createCmsCourse,
+  deleteCmsCourse,
+  deleteCourseQuestion,
+  deleteCourseResource,
+  getTrainingTrackingReport,
+  getWorkerCourseDashboard,
+  issueTrainingCertificate,
+  listCmsCourses,
+  recordCoursePresentialAttendance,
+  recordCourseWatchProgress,
+  submitCourseExam,
+  updateCmsCourse,
+} from '../services/courseCms.service.js';
+import {
+  autofillCvFromPdf,
+  getWorkerCvProfile,
+  uploadWorkerCvPdf,
+  upsertWorkerCvProfile,
+} from '../services/cvProfile.service.js';
+import {
   ensureWorkerExternalIntegrations,
   syncClinicEmoRecord,
   syncInsurerPolicyRecord,
@@ -780,5 +803,271 @@ apiRouter.post('/ai/audit-document/:workerDocumentId', async (req, res) => {
     res.json({ success: true, data: aiResult });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// MÓDULO 2 & 3: CMS DE CAPACITACIONES (4 DÍAS OBLIGATORIOS) + ASIGNACIONES
+// =========================================================================
+
+apiRouter.get('/courses', requireRole(['SSOMA', 'ECM', 'TRABAJADOR']), async (req, res) => {
+  try {
+    const includeInactive = req.authUser?.role === 'SSOMA' && req.query.includeInactive !== 'false';
+    const data = await listCmsCourses(includeInactive);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const course = await createCmsCourse(req.body);
+    res.status(201).json({ success: true, data: course });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.put('/courses/:id', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const course = await updateCmsCourse(String(req.params.id), req.body);
+    res.json({ success: true, data: course });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/courses/:id', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    await deleteCmsCourse(String(req.params.id));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/:id/resources', requireRole(['SSOMA']), upload.single('file'), async (req, res) => {
+  try {
+    let contentUrl = req.body.contentUrl as string | undefined;
+    let fileName = req.body.fileName as string | undefined;
+    let mimeType = req.body.mimeType as string | undefined;
+
+    if (req.file) {
+      fileName = req.file.originalname;
+      mimeType = req.file.mimetype;
+      contentUrl = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    }
+
+    const resource = await addCourseResource(String(req.params.id), {
+      type: req.body.type,
+      title: req.body.title,
+      contentUrl,
+      fileName,
+      durationMinutes: Number(req.body.durationMinutes) || 15,
+      orderIndex: Number(req.body.orderIndex) || 1,
+    });
+    res.status(201).json({ success: true, data: resource });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/courses/resources/:resourceId', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    await deleteCourseResource(String(req.params.resourceId));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/:id/questions', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const question = await addCourseQuestion(String(req.params.id), req.body);
+    res.status(201).json({ success: true, data: question });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/courses/questions/:questionId', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    await deleteCourseQuestion(String(req.params.questionId));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/assign', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const result = await assignCoursesToWorkers({
+      courseIds: Array.isArray(req.body.courseIds) ? req.body.courseIds : [],
+      workerIds: Array.isArray(req.body.workerIds) ? req.body.workerIds : undefined,
+      jobPosition: req.body.jobPosition || undefined,
+      contractorId: req.body.contractorId || undefined,
+      assignedBy: req.authUser?.email || 'ssoma@bateas.pe',
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.get('/courses/worker/:workerId/dashboard', requireRole(['SSOMA', 'ECM', 'TRABAJADOR']), async (req, res) => {
+  try {
+    const targetWorkerId = String(req.params.workerId);
+    if (req.authUser?.role === 'TRABAJADOR' && req.authUser.workerId !== targetWorkerId) {
+      res.status(403).json({ success: false, error: 'Solo puedes consultar tus propias capacitaciones.' });
+      return;
+    }
+    const dashboard = await getWorkerCourseDashboard(targetWorkerId);
+    res.json({ success: true, data: dashboard });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/worker/:workerId/watch', requireRole(['TRABAJADOR', 'SSOMA']), async (req, res) => {
+  try {
+    const targetWorkerId = String(req.params.workerId);
+    if (req.authUser?.role === 'TRABAJADOR' && req.authUser.workerId !== targetWorkerId) {
+      res.status(403).json({ success: false, error: 'Acceso denegado.' });
+      return;
+    }
+    const updated = await recordCourseWatchProgress({
+      workerId: targetWorkerId,
+      courseId: String(req.body.courseId),
+      deltaSeconds: Number(req.body.deltaSeconds) || 30,
+      demoAccelerated: Boolean(req.body.demoAccelerated),
+    });
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/worker/:workerId/exam', requireRole(['TRABAJADOR', 'SSOMA']), async (req, res) => {
+  try {
+    const targetWorkerId = String(req.params.workerId);
+    if (req.authUser?.role === 'TRABAJADOR' && req.authUser.workerId !== targetWorkerId) {
+      res.status(403).json({ success: false, error: 'Acceso denegado.' });
+      return;
+    }
+    const result = await submitCourseExam({
+      workerId: targetWorkerId,
+      courseId: String(req.body.courseId),
+      answers: req.body.answers || {},
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/worker/:workerId/presential', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const updated = await recordCoursePresentialAttendance({
+      workerId: String(req.params.workerId),
+      courseId: String(req.body.courseId),
+      attended: Boolean(req.body.attended),
+      presentialScore: Number(req.body.presentialScore) || 0,
+      notes: req.body.notes,
+      recordedBy: req.authUser?.email || 'ssoma@bateas.pe',
+    });
+    res.json({ success: true, data: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// MÓDULO 4: PERFIL CV ESTRUCTURADO (MANUAL + PDF + AUTOCOMPLETADO IA)
+// =========================================================================
+
+apiRouter.get('/workers/:workerId/cv-profile', requireRole(['SSOMA', 'ECM', 'TRABAJADOR']), async (req, res) => {
+  try {
+    const targetWorkerId = String(req.params.workerId);
+    if (req.authUser?.role === 'TRABAJADOR' && req.authUser.workerId !== targetWorkerId) {
+      res.status(403).json({ success: false, error: 'Acceso denegado.' });
+      return;
+    }
+    const profile = await getWorkerCvProfile(targetWorkerId);
+    res.json({ success: true, data: profile });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.put('/workers/:workerId/cv-profile', requireRole(['SSOMA', 'ECM']), async (req, res) => {
+  try {
+    const profile = await upsertWorkerCvProfile(
+      String(req.params.workerId),
+      req.body,
+      req.authUser?.email || 'ssoma@bateas.pe'
+    );
+    res.json({ success: true, data: profile });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/workers/:workerId/cv-profile/pdf', requireRole(['SSOMA', 'ECM']), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ success: false, error: 'Adjunta un archivo PDF.' });
+      return;
+    }
+    const profile = await uploadWorkerCvPdf(
+      String(req.params.workerId),
+      req.file,
+      req.authUser?.email || 'ssoma@bateas.pe'
+    );
+    res.json({ success: true, data: profile });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/workers/:workerId/cv-profile/autofill', requireRole(['SSOMA', 'ECM']), async (req, res) => {
+  try {
+    const profile = await autofillCvFromPdf(
+      String(req.params.workerId),
+      req.authUser?.email || 'ssoma@bateas.pe'
+    );
+    res.json({ success: true, data: profile });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// MÓDULO 5: SEGUIMIENTO, REPORTES Y CONSTANCIAS OFICIALES
+// =========================================================================
+
+apiRouter.get('/reports/training', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const report = await getTrainingTrackingReport({
+      contractorId: req.query.contractorId ? String(req.query.contractorId) : undefined,
+      jobPosition: req.query.jobPosition ? String(req.query.jobPosition) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+    });
+    res.json({ success: true, data: report });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/certificates/worker/:workerId/issue', requireRole(['SSOMA']), async (req, res) => {
+  try {
+    const cert = await issueTrainingCertificate(
+      String(req.params.workerId),
+      req.authUser?.email || 'ssoma@bateas.pe'
+    );
+    res.json({ success: true, data: cert });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { AuthUser, TrainingModuleProgressItem, TrainingRoadmap } from '../types/bateas';
 import { VrSimulatorModal } from './VrSimulatorModal';
+import { downloadOfficialCertificatePdf } from '../utils/certificatePdf';
 
 interface WorkerPortalProps {
   authUser: AuthUser;
@@ -60,17 +61,26 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
   // Simulador RV Socavón
   const [showVrModal, setShowVrModal] = useState(false);
 
+  // Aula CMS (Capacitaciones Pendientes y Completadas + Recursos + Quiz + Constancia)
+  const [cmsDashboard, setCmsDashboard] = useState<any>(null);
+  const [activeCmsAssignment, setActiveCmsAssignment] = useState<any>(null);
+  const [cmsQuizAnswers, setCmsQuizAnswers] = useState<Record<string, number>>({});
+  const [cmsNotice, setCmsNotice] = useState<string | null>(null);
+
   const fetchWorkerData = async () => {
     if (!authUser.workerId) {
       setLoading(false);
       return;
     }
     try {
-      const [rmRes, wRes] = await Promise.all([
+      const [rmRes, wRes, cmsRes] = await Promise.all([
         fetch(`/api/v1/training/roadmap/${authUser.workerId}`, {
           headers: { Authorization: `Bearer ${authUser.token}` },
         }).then((r) => r.json()),
         fetch(`/api/v1/workers/${authUser.workerId}`, {
+          headers: { Authorization: `Bearer ${authUser.token}` },
+        }).then((r) => r.json()),
+        fetch(`/api/v1/courses/worker/${authUser.workerId}/dashboard`, {
           headers: { Authorization: `Bearer ${authUser.token}` },
         }).then((r) => r.json()),
       ]);
@@ -85,6 +95,17 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
       }
       if (wRes.success) {
         setWorkerDetail(wRes.data);
+      }
+      if (cmsRes.success) {
+        setCmsDashboard(cmsRes.data);
+        if (activeCmsAssignment) {
+          const allCms = [
+            ...(cmsRes.data.pendingCourses || []),
+            ...(cmsRes.data.completedCourses || []),
+          ];
+          const refreshed = allCms.find((a: any) => a.id === activeCmsAssignment.id);
+          if (refreshed) setActiveCmsAssignment(refreshed);
+        }
       }
     } finally {
       setLoading(false);
@@ -714,6 +735,273 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                       </>
                     )}
                   </form>
+                )}
+              </div>
+            )}
+
+            {/* AULA CMS: CAPACITACIONES PENDIENTES Y COMPLETADAS + CONSTANCIA PDF */}
+            {cmsDashboard && (
+              <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                <div className="px-5 py-3.5 bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold">
+                      Mis Capacitaciones Asignadas (Pendientes vs. Completadas)
+                    </h3>
+                    <p className="text-[11px] text-slate-300">
+                      Progreso acumulado: {cmsDashboard.totalCompletedHours}h / {cmsDashboard.totalRequiredHours}h ({cmsDashboard.overallProgressPercent}%)
+                    </p>
+                  </div>
+                  {cmsDashboard.certificate && workerDetail && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        downloadOfficialCertificatePdf({
+                          workerName: workerDetail.fullName,
+                          workerDni: workerDetail.dni,
+                          jobPosition: workerDetail.jobPosition,
+                          contractorName: workerDetail.contractor?.companyName || 'Contratista ECM',
+                          verificationCode: cmsDashboard.certificate.verificationCode,
+                          issuedAt: cmsDashboard.certificate.issuedAt,
+                          issuedBy: cmsDashboard.certificate.issuedBy,
+                          totalHours: cmsDashboard.totalCompletedHours,
+                          virtualHours: cmsDashboard.daySummary
+                            .filter((d: any) => d.modality === 'VIRTUAL')
+                            .reduce((acc: number, d: any) => acc + d.completedHours, 0),
+                          presentialHours: cmsDashboard.daySummary
+                            .filter((d: any) => d.modality === 'PRESENCIAL')
+                            .reduce((acc: number, d: any) => acc + d.completedHours, 0),
+                          averageScore: cmsDashboard.certificate.averageScore ?? null,
+                          dayBreakdown: cmsDashboard.daySummary.map((d: any) => ({
+                            dayNumber: d.dayNumber,
+                            title: d.title,
+                            modality: d.modality,
+                            hours: d.requiredHours,
+                            status: d.allCompleted ? 'COMPLETADO' : 'PENDIENTE',
+                          })),
+                        })
+                      }
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Award className="w-4 h-4" />
+                      Descargar Constancia PDF
+                    </button>
+                  )}
+                </div>
+
+                <div className="p-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+                  {/* Pendientes */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-xs font-bold uppercase text-amber-700 flex items-center gap-1.5">
+                      <Clock className="w-4 h-4" />
+                      Capacitaciones Pendientes ({cmsDashboard.pendingCourses.length})
+                    </h4>
+                    {cmsDashboard.pendingCourses.length === 0 ? (
+                      <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded border border-slate-200">
+                        No tienes capacitaciones pendientes.
+                      </p>
+                    ) : (
+                      cmsDashboard.pendingCourses.map((a: any) => (
+                        <div key={a.id} className="p-3 rounded-lg border border-amber-200 bg-amber-50/40 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] font-bold text-slate-700">
+                              Día {a.course.dayNumber} · {a.course.modality} · {a.course.durationHours}h
+                            </div>
+                            <div className="font-bold text-xs text-slate-900">{a.course.title}</div>
+                            <div className="text-[11px] text-slate-500">
+                              Avance: {a.progressPercent}% {a.examScore !== null ? `· Última nota: ${a.examScore}%` : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={!a.isDayUnlocked || a.course.modality === 'PRESENCIAL'}
+                            onClick={() => {
+                              setActiveCmsAssignment(a);
+                              setCmsNotice(null);
+                              setCmsQuizAnswers({});
+                            }}
+                            className={`px-3 py-1.5 rounded text-xs font-bold ${
+                              !a.isDayUnlocked
+                                ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                                : a.course.modality === 'PRESENCIAL'
+                                ? 'bg-amber-100 text-amber-800 cursor-default'
+                                : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
+                            }`}
+                          >
+                            {!a.isDayUnlocked
+                              ? 'Bloqueado'
+                              : a.course.modality === 'PRESENCIAL'
+                              ? 'Presencial SSOMA'
+                              : a.progressPercent > 0
+                              ? 'Continuar'
+                              : 'Iniciar'}
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Completadas */}
+                  <div className="space-y-2.5">
+                    <h4 className="text-xs font-bold uppercase text-emerald-700 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Capacitaciones Completadas ({cmsDashboard.completedCourses.length})
+                    </h4>
+                    {cmsDashboard.completedCourses.length === 0 ? (
+                      <p className="text-xs text-slate-500 bg-slate-50 p-3 rounded border border-slate-200">
+                        Aún no completas ninguna capacitación.
+                      </p>
+                    ) : (
+                      cmsDashboard.completedCourses.map((a: any) => (
+                        <div key={a.id} className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[11px] font-bold text-emerald-800">
+                              Día {a.course.dayNumber} · {a.course.modality} · {a.course.durationHours}h
+                            </div>
+                            <div className="font-bold text-xs text-slate-900">{a.course.title}</div>
+                            <div className="text-[11px] text-emerald-700 font-semibold">
+                              100% Completado {a.examScore !== null ? `· Nota: ${a.examScore}%` : ''}
+                            </div>
+                          </div>
+                          <span className="px-2.5 py-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold">
+                            APROBADO
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                {/* Visor de Recursos + Quiz del Curso CMS seleccionado */}
+                {activeCmsAssignment && (
+                  <div className="border-t border-slate-200 p-5 bg-slate-50 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900">
+                          {activeCmsAssignment.course.title}
+                        </h4>
+                        <p className="text-xs text-slate-500">
+                          Avance actual: {activeCmsAssignment.progressPercent}% ({activeCmsAssignment.hoursCompleted}/{activeCmsAssignment.course.durationHours}h)
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const res = await fetch(`/api/v1/courses/worker/${authUser.workerId}/watch`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${authUser.token}`,
+                              },
+                              body: JSON.stringify({
+                                courseId: activeCmsAssignment.courseId,
+                                deltaSeconds: demoFastMode ? 36000 : 120,
+                                demoAccelerated: demoFastMode,
+                              }),
+                            }).then((r) => r.json());
+                            if (res.success) {
+                              setCmsNotice('Tiempo de visualización registrado correctamente.');
+                              await fetchWorkerData();
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded cursor-pointer"
+                        >
+                          {demoFastMode ? 'Completar Visualización (Modo Demo)' : 'Registrar Visualización'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setActiveCmsAssignment(null)}
+                          className="text-xs text-slate-500 hover:text-slate-800"
+                        >
+                          Cerrar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Recursos */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {(activeCmsAssignment.course.resources || []).map((r: any) => (
+                        <div key={r.id} className="p-3 bg-white border border-slate-200 rounded-lg space-y-2 text-xs">
+                          <div className="font-bold text-slate-800">
+                            [{r.type}] {r.title} ({r.durationMinutes} min)
+                          </div>
+                          {r.type === 'VIDEO' && r.contentUrl && (
+                            <video src={r.contentUrl} controls className="w-full rounded max-h-48 bg-black" />
+                          )}
+                          {(r.type === 'PDF' || r.type === 'PRESENTATION') && r.contentUrl && (
+                            <a
+                              href={r.contentUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-indigo-600 font-semibold hover:underline"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Abrir / Descargar {r.fileName || r.type}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Evaluación del curso */}
+                    {activeCmsAssignment.course.questions?.length > 0 && (
+                      <div className="bg-white p-4 rounded-lg border border-slate-200 space-y-3">
+                        <h5 className="text-xs font-bold uppercase text-slate-700">
+                          Evaluación del Curso (Mínimo {activeCmsAssignment.course.minPassScore}% · Intentos: {activeCmsAssignment.attemptsUsed}/{activeCmsAssignment.course.maxAttempts})
+                        </h5>
+                        {activeCmsAssignment.course.questions.map((q: any, idx: number) => (
+                          <div key={q.id} className="text-xs space-y-1.5 border-b border-slate-100 pb-2">
+                            <p className="font-semibold text-slate-800">
+                              {idx + 1}. {q.prompt}
+                            </p>
+                            {q.options.map((opt: string, oIdx: number) => (
+                              <label key={oIdx} className="flex items-center gap-2 cursor-pointer text-slate-700">
+                                <input
+                                  type="radio"
+                                  name={`cms_q_${q.id}`}
+                                  checked={cmsQuizAnswers[q.id] === oIdx}
+                                  onChange={() => setCmsQuizAnswers({ ...cmsQuizAnswers, [q.id]: oIdx })}
+                                />
+                                <span>{opt}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ))}
+                        {cmsNotice && (
+                          <div className="p-2.5 rounded bg-indigo-50 text-indigo-900 text-xs font-semibold">
+                            {cmsNotice}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const res = await fetch(`/api/v1/courses/worker/${authUser.workerId}/exam`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${authUser.token}`,
+                              },
+                              body: JSON.stringify({
+                                courseId: activeCmsAssignment.courseId,
+                                answers: cmsQuizAnswers,
+                              }),
+                            }).then((r) => r.json());
+                            if (res.success) {
+                              setCmsNotice(
+                                `Resultado: ${res.data.score}% (${res.data.passed ? 'APROBADO' : 'NO APROBADO'})`
+                              );
+                              await fetchWorkerData();
+                            } else {
+                              setCmsNotice(res.error || 'Error enviando evaluación.');
+                            }
+                          }}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded cursor-pointer"
+                        >
+                          Enviar Evaluación
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}

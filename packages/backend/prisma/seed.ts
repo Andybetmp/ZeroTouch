@@ -405,6 +405,307 @@ async function main() {
     });
   }
 
+  // 7. CMS DE CAPACITACIONES (4 Días D.S. 024-2016-EM) + ASIGNACIONES + PERFIL CV ESTRUCTURADO
+  console.log('🎓 Sembrando CMS de Capacitaciones 4 Días, Asignaciones y Perfil CV...');
+  const cmsCoursesSeed = [
+    {
+      code: 'CMS-D1-INDUCCION',
+      title: 'Inducción General Minera Bateas y RIT',
+      description: 'Política Integrada SSO, Derecho a Decir NO, Reglamento Interno de Trabajo y estándares de convivencia en campamento.',
+      dayNumber: 1,
+      modality: 'VIRTUAL' as const,
+      durationHours: 4.5,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      orderIndex: 1,
+      resources: [
+        {
+          type: 'VIDEO' as const,
+          title: 'Video Oficial: Cultura de Seguridad Cero Daño Bateas',
+          fileUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+          durationMinutes: 45,
+          orderIndex: 1,
+        },
+        {
+          type: 'PDF' as const,
+          title: 'Manual del Reglamento Interno de Seguridad y Salud Ocupacional (RISSO)',
+          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          fileName: 'RISSO_Bateas_2026.pdf',
+          durationMinutes: 30,
+          orderIndex: 2,
+        },
+      ],
+      questions: [
+        {
+          questionText: '¿Qué debe hacer un trabajador ante un riesgo grave o inminente no controlado?',
+          options: [
+            'Continuar la labor bajo presión del supervisor',
+            'Aplicar el Derecho a Decir NO, detener la tarea y reportar inmediatamente a SSOMA',
+            'Esperar al cambio de guardia',
+          ],
+          correctIndex: 1,
+          points: 2,
+        },
+        {
+          questionText: '¿Qué normativa peruana regula la Seguridad y Salud Ocupacional en Minería?',
+          options: ['D.S. 024-2016-EM y D.S. 023-2017-EM', 'Ley 27444', 'Código Civil Art. 120'],
+          correctIndex: 0,
+          points: 2,
+        },
+      ],
+    },
+    {
+      code: 'CMS-D1-AMBIENTE',
+      title: 'Gestión Ambiental y Segregación de Residuos NTP',
+      description: 'Código de colores para residuos sólidos mineros, control de derrames y cuidado hídrico en unidad Caylloma.',
+      dayNumber: 1,
+      modality: 'VIRTUAL' as const,
+      durationHours: 3.5,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      orderIndex: 2,
+      resources: [
+        {
+          type: 'PRESENTATION' as const,
+          title: 'Presentación: Código de Colores NTP 900.058 y Manejo de Hidrocarburos',
+          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          fileName: 'Presentacion_MedioAmbiente_NTP.pdf',
+          durationMinutes: 25,
+          orderIndex: 1,
+        },
+      ],
+      questions: [
+        {
+          questionText: '¿En qué color de contenedor se disponen los residuos peligrosos (trapos con aceite, envases químicos)?',
+          options: ['Verde', 'Rojo', 'Azul'],
+          correctIndex: 1,
+          points: 2,
+        },
+      ],
+    },
+    {
+      code: 'CMS-D2-TECNICO',
+      title: 'IPERC Continuo, LOTO y Control de Rocas en Socavón',
+      description: 'Capacitación técnica específica por puesto: desate de rocas, ventilación, bloqueo de energías peligrosas y MATPEL.',
+      dayNumber: 2,
+      modality: 'VIRTUAL' as const,
+      durationHours: 8.0,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      orderIndex: 1,
+      resources: [
+        {
+          type: 'VIDEO' as const,
+          title: 'Procedimiento PETS: Desate de Rocas y Monitoreo de Gases',
+          fileUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+          durationMinutes: 60,
+          orderIndex: 1,
+        },
+        {
+          type: 'PDF' as const,
+          title: 'Guía Técnica LOTO y Tabla de Límites Máximos Permisibles de Gases',
+          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          fileName: 'Guia_LOTO_Gases_Socavon.pdf',
+          durationMinutes: 40,
+          orderIndex: 2,
+        },
+      ],
+      questions: [
+        {
+          questionText: '¿Cuál es el porcentaje mínimo permisible de Oxígeno (O2) en labores subterráneas?',
+          options: ['16.0 %', '19.5 %', '25.0 %'],
+          correctIndex: 1,
+          points: 2,
+        },
+        {
+          questionText: '¿En qué orden se ejecuta el bloqueo LOTO?',
+          options: [
+            'Bloquear después de reparar',
+            'Cortar energía, bloquear con candado/tarjeta personal y verificar energía cero',
+            'Solo avisar por radio',
+          ],
+          correctIndex: 1,
+          points: 2,
+        },
+      ],
+    },
+    {
+      code: 'CMS-D3-PRACTICA',
+      title: 'Práctica Presencial de Campo: EPP, Rescate y Primeros Auxilios',
+      description: 'Entrenamiento presencial en estación práctica SSOMA: uso de autorrescatador, arnés, extintores y control de hemorragias.',
+      dayNumber: 3,
+      modality: 'PRESENCIAL' as const,
+      durationHours: 8.0,
+      minPassScore: 70,
+      maxAttempts: 2,
+      jobSpecialty: null,
+      orderIndex: 1,
+      resources: [
+        {
+          type: 'PDF' as const,
+          title: 'Lista de Verificación Práctica Día 3 (SSOMA)',
+          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          fileName: 'Checklist_Practica_Dia3.pdf',
+          durationMinutes: 30,
+          orderIndex: 1,
+        },
+      ],
+      questions: [],
+    },
+    {
+      code: 'CMS-D4-SIMULACION',
+      title: 'Simulación Presencial de Emergencias y Evaluación Final',
+      description: 'Simulacro integral de evacuación en socavón, respuesta ante amago de incendio y evaluación final en terreno.',
+      dayNumber: 4,
+      modality: 'PRESENCIAL' as const,
+      durationHours: 8.0,
+      minPassScore: 70,
+      maxAttempts: 2,
+      jobSpecialty: null,
+      orderIndex: 1,
+      resources: [
+        {
+          type: 'PRESENTATION' as const,
+          title: 'Protocolo de Emergencias Minera Bateas - Día 4',
+          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+          fileName: 'Protocolo_Emergencias_Dia4.pdf',
+          durationMinutes: 30,
+          orderIndex: 1,
+        },
+      ],
+      questions: [],
+    },
+  ];
+
+  const createdCourses: any[] = [];
+  for (const c of cmsCoursesSeed) {
+    const existing = await prisma.trainingCourse.findUnique({ where: { code: c.code } });
+    if (!existing) {
+      const created = await prisma.trainingCourse.create({
+        data: {
+          code: c.code,
+          title: c.title,
+          description: c.description,
+          dayNumber: c.dayNumber,
+          modality: c.modality,
+          durationHours: c.durationHours,
+          minPassScore: c.minPassScore,
+          maxAttempts: c.maxAttempts,
+          jobSpecialty: c.jobSpecialty,
+          orderIndex: c.orderIndex,
+          isActive: true,
+          resources: {
+            create: c.resources,
+          },
+          questions: {
+            create: c.questions.map((q) => ({
+              questionText: q.questionText,
+              optionsJson: JSON.stringify(q.options),
+              correctIndex: q.correctIndex,
+              points: q.points,
+            })),
+          },
+        },
+      });
+      createdCourses.push(created);
+    } else {
+      createdCourses.push(existing);
+    }
+  }
+
+  // Asignar cursos a trabajador@bateas.pe (Día 1 completado, Día 2-4 pendientes para demo fluida)
+  if (amberWorker) {
+    for (const c of createdCourses) {
+      const isDay1 = c.dayNumber === 1;
+      await prisma.workerCourseAssignment.upsert({
+        where: { workerId_courseId: { workerId: amberWorker.id, courseId: c.id } },
+        update: {},
+        create: {
+          workerId: amberWorker.id,
+          courseId: c.id,
+          status: isDay1 ? 'COMPLETED' : 'PENDING',
+          progressPercent: isDay1 ? 100 : 0,
+          hoursCompleted: isDay1 ? c.durationHours : 0,
+          watchedSeconds: isDay1 ? Math.round(c.durationHours * 3600) : 0,
+          examScore: isDay1 ? 92 : null,
+          attemptsUsed: isDay1 ? 1 : 0,
+          notes: 'Asignado en semilla inicial',
+          completedAt: isDay1 ? new Date() : null,
+        },
+      });
+    }
+
+    await prisma.workerCvProfile.upsert({
+      where: { workerId: amberWorker.id },
+      update: {},
+      create: {
+        workerId: amberWorker.id,
+        educationJson: JSON.stringify([
+          { institution: 'TECSUP Arequipa', degree: 'Técnico en Operación de Equipo Pesado', year: '2018' },
+        ]),
+        workExperienceJson: JSON.stringify([
+          { company: 'Transportes del Sur S.A.C.', role: 'Operador Logístico', period: '2019 - 2021' },
+        ]),
+        miningExperienceJson: JSON.stringify([
+          { mineOrUnit: 'U.M. San Cristóbal - Bateas', role: 'Operador Socavón', years: '4 años', undergroundOrSurface: 'Socavón' },
+        ]),
+        specializationsJson: JSON.stringify([
+          { name: 'IPERC Continuo y Desate de Rocas', level: 'Avanzado' },
+          { name: 'Bloqueo LOTO y Ventilación Subterránea', level: 'Intermedio' },
+        ]),
+        certificationsJson: JSON.stringify([
+          { name: 'Licencia MTC A-IIb', issuer: 'MTC Perú', validUntil: '2027-08-15' },
+        ]),
+        coursesJson: JSON.stringify([
+          { name: 'Primeros Auxilios y Respuesta a Emergencias Mineras', hours: '16h', year: '2025' },
+        ]),
+        updatedBy: 'ecm@bateas.pe',
+      },
+    });
+  }
+
+  // Asignar y completar 4 días para el trabajador VERDE de demostración + emitir constancia
+  const greenWorkerCms = await prisma.worker.findUnique({ where: { dni: '71234561' } });
+  if (greenWorkerCms) {
+    for (const c of createdCourses) {
+      await prisma.workerCourseAssignment.upsert({
+        where: { workerId_courseId: { workerId: greenWorkerCms.id, courseId: c.id } },
+        update: {},
+        create: {
+          workerId: greenWorkerCms.id,
+          courseId: c.id,
+          status: 'COMPLETED',
+          progressPercent: 100,
+          hoursCompleted: c.durationHours,
+          watchedSeconds: Math.round(c.durationHours * 3600),
+          examScore: c.modality === 'VIRTUAL' ? 95 : 92,
+          instructorName: c.modality === 'PRESENCIAL' ? 'ssoma@bateas.pe' : null,
+          attendanceDate: c.modality === 'PRESENCIAL' ? new Date().toISOString().slice(0, 10) : null,
+          attemptsUsed: 1,
+          completedAt: new Date(),
+        },
+      });
+    }
+
+    const existingCert = await prisma.trainingCertificate.findFirst({ where: { workerId: greenWorkerCms.id } });
+    if (!existingCert) {
+      await prisma.trainingCertificate.create({
+        data: {
+          workerId: greenWorkerCms.id,
+          certificateCode: 'BAT-CERT-2026-0001',
+          virtualHours: 16,
+          presentialHours: 16,
+          totalHours: 32,
+          averageScore: 93.8,
+          issuedBy: 'ssoma@bateas.pe',
+        },
+      });
+    }
+  }
+
   console.log('✅ Seed completo de los 5 módulos finalizado exitosamente.');
 }
 

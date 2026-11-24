@@ -49,6 +49,9 @@ import { AuthUser } from './types/bateas';
 import { BiometricModal } from './components/BiometricModal';
 import { WorkerPortal } from './components/WorkerPortal';
 import { SsomaControlPanels } from './components/SsomaControlPanels';
+import { CourseManagementPanel } from './components/CourseManagementPanel';
+import { TrackingReportsPanel } from './components/TrackingReportsPanel';
+import { WorkerCvProfileModal } from './components/WorkerCvProfileModal';
 
 type TrafficLight = 'VERDE' | 'AMBAR' | 'ROJO';
 type DocStatus = 'PENDIENTE' | 'VERDE' | 'AMBAR' | 'ROJO';
@@ -64,7 +67,9 @@ type NavSection =
   | 'ACCESOS_CARNET_QR'
   | 'SSOMA_CMS_CAPACITACION'
   | 'SSOMA_TORRE_CONTROL'
-  | 'SSOMA_INTEGRACIONES';
+  | 'SSOMA_INTEGRACIONES'
+  | 'SSOMA_GESTION_CAPACITACIONES'
+  | 'SSOMA_SEGUIMIENTO_REPORTES';
 
 interface Requirement {
   id: string;
@@ -103,6 +108,7 @@ interface DigitalBadge {
 
 interface Worker {
   id: string;
+  contractorId?: string;
   dni: string;
   fullName: string;
   jobPosition: string;
@@ -233,6 +239,22 @@ export default function App() {
 
   // Modal de inspección de texto OCR
   const [inspectedDoc, setInspectedDoc] = useState<WorkerDocument | null>(null);
+  const [showCvProfileModal, setShowCvProfileModal] = useState<boolean>(false);
+
+  const apiFetch = async (path: string, options: RequestInit = {}) => {
+    const headers: Record<string, string> = {
+      ...((options.headers as Record<string, string>) || {}),
+    };
+    if (authUser?.token) {
+      headers['Authorization'] = `Bearer ${authUser.token}`;
+    }
+    const resp = await fetch(`/api/v1${path}`, { ...options, headers });
+    const json = await resp.json();
+    if (!resp.ok || json.success === false) {
+      throw new Error(json.error || `Error HTTP ${resp.status}`);
+    }
+    return json;
+  };
 
   // Estado del Copiloto IA (Gemini + MCP Context)
   const [showCopilot, setShowCopilot] = useState<boolean>(() => {
@@ -1219,6 +1241,28 @@ export default function App() {
             <Webhook className="w-4 h-4 text-sky-400" />
             <span>Integraciones EMO/SCTR</span>
           </button>
+          <button
+            onClick={() => setActiveNav('SSOMA_GESTION_CAPACITACIONES')}
+            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+              activeNav === 'SSOMA_GESTION_CAPACITACIONES'
+                ? 'bg-[#1e282c] text-white border-l-4 border-emerald-400 font-bold'
+                : 'hover:bg-[#1e282c] text-slate-300'
+            }`}
+          >
+            <BookOpen className="w-4 h-4 text-emerald-400" />
+            <span>Gestión de Capacitaciones</span>
+          </button>
+          <button
+            onClick={() => setActiveNav('SSOMA_SEGUIMIENTO_REPORTES')}
+            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+              activeNav === 'SSOMA_SEGUIMIENTO_REPORTES'
+                ? 'bg-[#1e282c] text-white border-l-4 border-teal-400 font-bold'
+                : 'hover:bg-[#1e282c] text-slate-300'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-teal-400" />
+            <span>Seguimiento y Reportes</span>
+          </button>
 
           <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
             <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">
@@ -1909,6 +1953,14 @@ export default function App() {
                             >
                               <BookOpen className="w-4 h-4" />{' '}
                               {selectedWorker.elearningPassed ? 'Ver E-Learning (Aprobado)' : 'Rendir E-Learning Web'}
+                            </button>
+                          )}
+                          {(authUser.strictRole === 'SSOMA' || authUser.strictRole === 'ECM') && (
+                            <button
+                              onClick={() => setShowCvProfileModal(true)}
+                              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <FileText className="w-4 h-4" /> Perfil CV Estructurado
                             </button>
                           )}
                         </div>
@@ -2795,6 +2847,57 @@ export default function App() {
               token={authUser.token}
               onRefreshAll={fetchAllData}
               onNotice={showNotice}
+            />
+          )}
+
+          {activeNav === 'SSOMA_GESTION_CAPACITACIONES' && (
+            <CourseManagementPanel
+              apiFetch={apiFetch}
+              workers={workers.map((w) => ({
+                id: w.id,
+                fullName: w.fullName,
+                dni: w.dni,
+                jobPosition: w.jobPosition,
+                contractorId: w.contractorId || w.contractor.ruc,
+              }))}
+              contractors={Array.from(
+                new Map(
+                  workers.map((w) => [
+                    w.contractorId || w.contractor.ruc,
+                    { id: w.contractorId || w.contractor.ruc, name: w.contractor.companyName },
+                  ])
+                ).values()
+              )}
+              onNotify={(msg) => showNotice('info', msg)}
+            />
+          )}
+
+          {activeNav === 'SSOMA_SEGUIMIENTO_REPORTES' && (
+            <TrackingReportsPanel
+              apiFetch={apiFetch}
+              contractors={Array.from(
+                new Map(
+                  workers.map((w) => [
+                    w.contractorId || w.contractor.ruc,
+                    { id: w.contractorId || w.contractor.ruc, name: w.contractor.companyName },
+                  ])
+                ).values()
+              )}
+              onNotify={(msg) => showNotice('info', msg)}
+            />
+          )}
+
+          {showCvProfileModal && selectedWorker && (
+            <WorkerCvProfileModal
+              worker={{
+                id: selectedWorker.id,
+                fullName: selectedWorker.fullName,
+                dni: selectedWorker.dni,
+                jobPosition: selectedWorker.jobPosition,
+              }}
+              apiFetch={apiFetch}
+              onClose={() => setShowCvProfileModal(false)}
+              onNotify={(msg) => showNotice('info', msg)}
             />
           )}
 
