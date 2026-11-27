@@ -425,10 +425,10 @@ export async function verifyGaritaBadgeOrDni(badgeCodeOrDni: string) {
 
     return {
       accessGranted: false,
-      verificationStatus: 'DENIED_NO_BADGE',
+      verificationStatus: workerOnly ? 'DENIED_NO_BADGE' : 'DENIED_NOT_REGISTERED',
       reason: workerOnly
-        ? `ACCESO DENEGADO EN GARITA: El trabajador ${workerOnly.fullName} (DNI ${workerOnly.dni}) tiene Semáforo en ${workerOnly.trafficLight} (${workerOnly.statusSummary}) y no posee Carné QR habilitado.`
-        : `ACCESO DENEGADO EN GARITA: No existe credencial QR ni trabajador afiliado con el código/DNI "${clean}".`,
+        ? `ACCESO DENEGADO EN GARITA: El trabajador ${workerOnly.fullName} (DNI ${workerOnly.dni}) presenta estado ${workerOnly.trafficLight} (${workerOnly.statusSummary}).`
+        : `No existe trabajador afiliado con el DNI ${clean}.`,
       signatureValid: false,
       worker: workerOnly || null,
       badge: null,
@@ -462,18 +462,25 @@ export async function verifyGaritaBadgeOrDni(badgeCodeOrDni: string) {
   const isGreen = badge.worker.trafficLight === 'VERDE' && !badge.worker.isBlacklisted;
   const accessGranted = signatureValid && isGreen && !isExpired;
 
+  const pvcLabelMap: Record<string, string> = {
+    QUEUED_GARITA: 'En cola de impresión',
+    PRINTED: 'Impreso',
+    DELIVERED: 'Entregado',
+  };
+  const pvcLabel = pvcLabelMap[badge.pvcPrintStatus] || badge.pvcPrintStatus;
+
   return {
     accessGranted,
     verificationStatus: accessGranted ? 'ACCESS_GRANTED_GARITA' : 'ACCESS_REVOKED_OR_INVALID',
     reason: accessGranted
-      ? `ACCESO AUTORIZADO EN GARITA: Firma HMAC-SHA256 válida, Semáforo VERDE y documentos vigentes hasta ${
+      ? `ACCESO AUTORIZADO EN GARITA: Semáforo VERDE y documentos vigentes hasta ${
           badge.validUntil.toISOString().split('T')[0]
-        }. Fotocheck PVC: ${badge.pvcPrintStatus}.`
+        }. Fotocheck PVC: ${pvcLabel}.`
       : `ACCESO BLOQUEADO EN GARITA: ${
           !signatureValid
-            ? 'Firma criptográfica QR inválida.'
+            ? 'Validación de seguridad inválida.'
             : isExpired
-            ? 'Credencial vencida.'
+            ? 'Habilitación vencida.'
             : `Semáforo actual en ${badge.worker.trafficLight}.`
         }`,
     signatureValid,

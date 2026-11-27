@@ -1,1 +1,124 @@
 @import "tailwindcss";
+
+:root {
+  --bateas-bg: #F8FAFC;
+  --bateas-surface: #FFFFFF;
+  --bateas-border: #E2E8F0;
+  --bateas-primary: #047857;
+  --bateas-primary-hover: #065F46;
+  --bateas-sidebar: #1E293B;
+}
+
+body {
+  background-color: var(--bateas-bg);
+  color: #0F172A;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@keyframes bateas-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes bateas-top-bar {
+  0% {
+    transform: translateX(-100%) scaleX(0.35);
+  }
+  50% {
+    transform: translateX(35%) scaleX(0.65);
+  }
+  100% {
+    transform: translateX(100%) scaleX(0.35);
+  }
+}
+
+@keyframes bateas-scan-line {
+  0%, 100% {
+    transform: translateY(-10px);
+    opacity: 0.35;
+  }
+  50% {
+    transform: translateY(10px);
+    opacity: 1;
+  }
+}
+
+@keyframes bateas-slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bateas-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bateas-check-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.bateas-shimmer {
+  background: linear-gradient(90deg, #F1F5F9 25%, #E2E8F0 50%, #F1F5F9 75%);
+  background-size: 200% 100%;
+  animation: bateas-shimmer 1.6s ease-in-out infinite;
+}
+
+.bateas-top-progress {
+  animation: bateas-top-bar 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.bateas-scan-beam {
+  animation: bateas-scan-line 1.8s ease-in-out infinite;
+}
+
+.bateas-slide-in-right {
+  animation: bateas-slide-in-right 220ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.bateas-fade-in {
+  animation: bateas-fade-in 200ms ease-out forwards;
+}
+
+.bateas-check-pop {
+  animation: bateas-check-pop 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bateas-shimmer,
+  .bateas-top-progress,
+  .bateas-scan-beam,
+  .bateas-slide-in-right,
+  .bateas-fade-in,
+  .bateas-check-pop {
+    animation: none !important;
+    transition: none !important;
+  }
+}

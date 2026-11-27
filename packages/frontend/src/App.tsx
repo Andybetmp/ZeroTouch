@@ -16,6 +16,7 @@ import {
   FileSpreadsheet,
   FileText,
   Filter,
+  FlaskConical,
   FolderKanban,
   HardHat,
   Home,
@@ -46,10 +47,26 @@ import {
 import { AuthUser } from './types/bateas';
 import { BiometricModal } from './components/BiometricModal';
 import { WorkerPortal } from './components/WorkerPortal';
+import { GaritaAccessPortal } from './components/GaritaAccessPortal';
 import { SsomaControlPanels } from './components/SsomaControlPanels';
 import { CourseManagementPanel } from './components/CourseManagementPanel';
 import { TrackingReportsPanel } from './components/TrackingReportsPanel';
 import { WorkerCvProfileModal } from './components/WorkerCvProfileModal';
+import {
+  BrandLoadingRole,
+  BrandLoadingScreen,
+  LoadingButton,
+  SmartLoaderMode,
+  SmartProcessLoader,
+  TopProgressBar,
+} from './components/ui/LoadingStates';
+import { DemoModeDrawer } from './components/ui/DemoModeDrawer';
+import {
+  formatAreaName,
+  formatJobProfile,
+  formatStayType,
+  pluralize,
+} from './utils/formatters';
 
 type TrafficLight = 'VERDE' | 'AMBAR' | 'ROJO';
 type DocStatus = 'PENDIENTE' | 'VERDE' | 'AMBAR' | 'ROJO';
@@ -238,6 +255,18 @@ export default function App() {
   // Modal de inspección de texto OCR
   const [inspectedDoc, setInspectedDoc] = useState<WorkerDocument | null>(null);
   const [showCvProfileModal, setShowCvProfileModal] = useState<boolean>(false);
+  const [showDemoDrawer, setShowDemoDrawer] = useState<boolean>(false);
+  const [smartLoaderMode, setSmartLoaderMode] = useState<SmartLoaderMode | null>(null);
+  const [activeAffiliateStep, setActiveAffiliateStep] = useState<1 | 2>(1);
+  const [showRawOcrText, setShowRawOcrText] = useState<boolean>(false);
+  const [aiAuditLoading, setAiAuditLoading] = useState<boolean>(false);
+  const [resolvingDecision, setResolvingDecision] = useState<'APPROVED' | 'REJECTED' | null>(null);
+  const [showLoginDemoQuickAccess, setShowLoginDemoQuickAccess] = useState<boolean>(false);
+  const [showRowSimulators, setShowRowSimulators] = useState<boolean>(false);
+  const [sessionSplash, setSessionSplash] = useState<{
+    role: BrandLoadingRole;
+    userName?: string;
+  } | null>({ role: 'BOOT' });
 
   const apiFetch = async (path: string, options: RequestInit = {}) => {
     const headers: Record<string, string> = {
@@ -309,6 +338,15 @@ export default function App() {
   }, [authUser]);
 
   const completeLoginSession = (userObj: AuthUser) => {
+    const splashRole: BrandLoadingRole =
+      userObj.strictRole === 'TRABAJADOR'
+        ? 'TRABAJADOR'
+        : userObj.strictRole === 'ECM' || userObj.role === 'ADMIN_ECM'
+        ? 'ECM'
+        : userObj.strictRole === 'GARITA' || userObj.role === 'GARITA'
+        ? 'GARITA'
+        : 'SSOMA';
+    setSessionSplash({ role: splashRole, userName: userObj.fullName });
     setAuthUser(userObj);
     sessionStorage.setItem('bateas_auth_user', JSON.stringify(userObj));
     if (userObj.strictRole === 'TRABAJADOR') {
@@ -326,6 +364,9 @@ export default function App() {
       setActiveNav('INICIO_ACCESO_DIRECTO');
       window.history.replaceState(null, '', '/admin/panel');
     }
+    window.setTimeout(() => {
+      setSessionSplash(null);
+    }, 950);
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -399,7 +440,14 @@ export default function App() {
   };
 
   useEffect(() => {
-    fetchAllData();
+    let active = true;
+    const minSplash = new Promise<void>((resolve) => window.setTimeout(resolve, 650));
+    Promise.all([fetchAllData(), minSplash]).finally(() => {
+      if (active) setSessionSplash((prev) => (prev?.role === 'BOOT' ? null : prev));
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   const selectedWorker = workers.find((w) => w.id === selectedWorkerId) || workers[0] || null;
@@ -482,11 +530,13 @@ export default function App() {
 
   const handleFileUpload = async (workerId: string, requirementId: string, file: File) => {
     setLoading(true);
+    setSmartLoaderMode('ocr');
     try {
       const formData = new FormData();
       formData.append('file', file);
       const res = await fetch(`/api/v1/workers/${workerId}/documents/${requirementId}/upload`, {
         method: 'POST',
+        headers: authUser?.token ? { Authorization: `Bearer ${authUser.token}` } : undefined,
         body: formData,
       }).then((r) => r.json());
 
@@ -494,9 +544,12 @@ export default function App() {
         await fetchAllData(workerId);
         showNotice('success', `Archivo "${file.name}" procesado por el motor OCR en < 2s.`);
       } else {
-        showNotice('error', res.error);
+        showNotice('error', res.error || 'No se pudo procesar el archivo.');
       }
+    } catch (err: any) {
+      showNotice('error', err?.message || 'Error de conexión al subir el documento.');
     } finally {
+      setSmartLoaderMode(null);
       setLoading(false);
     }
   };
@@ -553,6 +606,7 @@ export default function App() {
     }
 
     setLoading(true);
+    setResolvingDecision(decision);
     try {
       const res = await fetch(`/api/v1/exceptions/${exceptionId}/resolve`, {
         method: 'PATCH',
@@ -575,6 +629,7 @@ export default function App() {
         showNotice('error', res.error);
       }
     } finally {
+      setResolvingDecision(null);
       setLoading(false);
     }
   };
@@ -693,7 +748,7 @@ export default function App() {
   };
 
   const handleRunGeminiDocAudit = async (docId: string, exceptionId?: string) => {
-    setLoading(true);
+    setAiAuditLoading(true);
     try {
       const res = await fetch(`/api/v1/ai/audit-document/${docId}`, {
         method: 'POST',
@@ -719,7 +774,7 @@ export default function App() {
         showNotice('error', res.error);
       }
     } finally {
-      setLoading(false);
+      setAiAuditLoading(false);
     }
   };
 
@@ -862,31 +917,35 @@ export default function App() {
     if (status === 'VERDE') {
       return (
         <span
-          className={`inline-flex items-center gap-1 rounded font-bold bg-emerald-500 text-white shadow-2xs ${base}`}
+          className={`inline-flex items-center gap-1 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 ${base}`}
         >
-          <CheckCircle2 className="w-3.5 h-3.5" /> VERDE
+          <CheckCircle2 className="w-3.5 h-3.5" /> Habilitado
         </span>
       );
     }
     if (status === 'ROJO') {
       return (
-        <span className={`inline-flex items-center gap-1 rounded font-bold bg-rose-600 text-white shadow-2xs ${base}`}>
-          <XCircle className="w-3.5 h-3.5" /> ROJO
+        <span
+          className={`inline-flex items-center gap-1 rounded-full font-semibold bg-rose-50 text-rose-700 border border-rose-200 ${base}`}
+        >
+          <XCircle className="w-3.5 h-3.5" /> Bloqueado
         </span>
       );
     }
     if (status === 'AMBAR') {
       return (
         <span
-          className={`inline-flex items-center gap-1 rounded font-bold bg-amber-400 text-slate-950 shadow-2xs ${base}`}
+          className={`inline-flex items-center gap-1 rounded-full font-semibold bg-amber-50 text-amber-700 border border-amber-200 ${base}`}
         >
-          <AlertTriangle className="w-3.5 h-3.5" /> ÁMBAR
+          <AlertTriangle className="w-3.5 h-3.5" /> Observado
         </span>
       );
     }
     return (
-      <span className={`inline-flex items-center gap-1 rounded font-semibold bg-slate-200 text-slate-700 ${base}`}>
-        <Clock className="w-3.5 h-3.5" /> PENDIENTE
+      <span
+        className={`inline-flex items-center gap-1 rounded-full font-semibold bg-slate-100 text-slate-600 border border-slate-200 ${base}`}
+      >
+        <Clock className="w-3.5 h-3.5" /> Pendiente
       </span>
     );
   };
@@ -898,36 +957,45 @@ export default function App() {
       case 'INICIO_PANEL_CONTROL':
         return 'Inicio / Sistema de Recursos Humanos / Panel de control';
       case 'AFILIACION_AFILIADOS':
-        return 'Inicio / Afiliación / Afiliados y Pre-validación OCR Zero-Touch';
+        return 'Inicio / Afiliación / Afiliados y Pre-validación OCR';
       case 'AFILIACION_EXCEPCIONES':
         return 'Inicio / Afiliación / Bandeja de Excepciones (SSOMA · Área Médica · DHO)';
       case 'AFILIACION_ELEARNING':
-        return 'Inicio / Afiliación / Inducciones Teóricas Asíncronas (E-Learning Web)';
+        return 'Inicio / Afiliación / Inducciones E-Learning';
       case 'AFILIACION_DOCS_ESTADIA':
         return 'Inicio / Afiliación / Documentos por estadía';
       case 'AFILIACION_LISTA_NEGRA':
         return 'Inicio / Afiliación / Lista negra';
       case 'ACCESOS_CARNET_QR':
-        return 'Inicio / Control de accesos / Carné Digital QR y Fotocheck PVC';
+        return 'Inicio / Control de Acceso / Estado de Habilitación por DNI';
       case 'SSOMA_CMS_CAPACITACION':
-        return 'Inicio / Administración SSOMA / Gestor CMS de Capacitación (32 Horas)';
+        return 'Inicio / Administración SSOMA / Gestor CMS de Capacitación';
       case 'SSOMA_TORRE_CONTROL':
-        return 'Inicio / Administración SSOMA / Torre de Control, Presencial (Días 3-4) y Biometría IA';
+        return 'Inicio / Administración SSOMA / Torre de Control y Biometría';
       case 'SSOMA_INTEGRACIONES':
-        return 'Inicio / Administración SSOMA / Integraciones API (Clínicas EMO & Aseguradoras)';
+        return 'Inicio / Administración SSOMA / Integraciones EMO y SCTR';
+      case 'SSOMA_GESTION_CAPACITACIONES':
+        return 'Inicio / Administración SSOMA / Gestión de Capacitaciones por Área';
+      case 'SSOMA_SEGUIMIENTO_REPORTES':
+        return 'Inicio / Administración SSOMA / Seguimiento y Reportes';
     }
   };
 
+  if (sessionSplash) {
+    return <BrandLoadingScreen role={sessionSplash.role} userName={sessionSplash.userName} />;
+  }
+
   if (!authUser) {
     return (
-      <div className="min-h-screen bg-[#1a2226] flex items-center justify-center p-4 font-sans">
-        <div className="max-w-md w-full bg-white rounded-xl shadow-2xl overflow-hidden border border-slate-700">
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4 font-sans">
+        <TopProgressBar active={loginLoading} />
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-sm overflow-hidden border border-slate-200">
           {/* Header Corporativo Login */}
-          <div className="bg-[#222d32] p-6 text-center text-white space-y-2 border-b border-slate-700">
-            <div className="w-12 h-12 rounded-full bg-emerald-500 text-slate-950 font-black text-2xl flex items-center justify-center mx-auto shadow-md">
+          <div className="bg-slate-900 p-6 text-center text-white space-y-2 border-b border-slate-800">
+            <div className="w-11 h-11 rounded-xl bg-emerald-600 text-white font-black text-xl flex items-center justify-center mx-auto shadow-xs">
               B
             </div>
-            <h1 className="text-lg font-black tracking-wide">App Bateas v2.1.0 · Zero-Touch</h1>
+            <h1 className="text-lg font-bold tracking-tight">App Bateas v3.0 · Zero-Touch</h1>
             <p className="text-xs text-slate-300">
               Sistema de Recursos Humanos y Habilitación Inteligente de Contratistas — Minera Bateas S.A.C.
             </p>
@@ -964,84 +1032,122 @@ export default function App() {
               />
             </div>
 
-            <button
+            <LoadingButton
               type="submit"
-              disabled={loginLoading}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-lg shadow transition cursor-pointer disabled:opacity-50"
+              variant="primary"
+              isLoading={loginLoading}
+              loadingText="Verificando credenciales..."
+              className="w-full py-3 min-h-[44px] text-sm rounded-xl"
             >
-              {loginLoading ? 'Verificando credenciales...' : 'Ingresar a la Plataforma'}
-            </button>
+              Ingresar a la Plataforma
+            </LoadingButton>
 
-            {/* Selector Rápido de Perfiles de Prueba para el Cliente / Jurado */}
-            <div className="pt-4 border-t border-slate-200 space-y-2">
-              <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider text-center">
-                Accesos Rápidos de Demostración (1-Clic)
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('ecm@bateas.pe');
-                    setLoginPassword('Bateas2026!');
-                  }}
-                  className={`p-2 rounded border text-center transition cursor-pointer ${
-                    loginUsername === 'ecm@bateas.pe'
-                      ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-bold'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  👷 Admin ECM
-                  <span className="block text-[10px] text-slate-400 font-normal">ecm@bateas.pe</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('ssoma@bateas.pe');
-                    setLoginPassword('Bateas2026!');
-                  }}
-                  className={`p-2 rounded border text-center transition cursor-pointer ${
-                    loginUsername === 'ssoma@bateas.pe'
-                      ? 'bg-amber-50 border-amber-500 text-amber-900 font-bold'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  🛡️ SSOMA / DHO
-                  <span className="block text-[10px] text-slate-400 font-normal">ssoma@bateas.pe</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('garita@bateas.pe');
-                    setLoginPassword('Bateas2026!');
-                  }}
-                  className={`p-2 rounded border text-center transition cursor-pointer ${
-                    loginUsername === 'garita@bateas.pe'
-                      ? 'bg-sky-50 border-sky-500 text-sky-900 font-bold'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  🚧 Control de Acceso
-                  <span className="block text-[10px] text-slate-400 font-normal">garita@bateas.pe</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLoginUsername('trabajador@bateas.pe');
-                    setLoginPassword('Bateas2026!');
-                  }}
-                  className={`p-2 rounded border text-center transition cursor-pointer ${
-                    loginUsername === 'trabajador@bateas.pe'
-                      ? 'bg-indigo-50 border-indigo-500 text-indigo-900 font-bold'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  🪪 Trabajador (Bio + RV)
-                  <span className="block text-[10px] text-slate-400 font-normal">trabajador@bateas.pe</span>
-                </button>
-              </div>
-              <p className="text-[11px] text-center text-slate-400">
-                Contraseña de prueba: <strong>Bateas2026!</strong>
-              </p>
+            {/* Acordeón discreto cerrado por defecto para accesos demo */}
+            <div className="pt-3 border-t border-slate-200 space-y-2.5">
+              <button
+                type="button"
+                onClick={() => setShowLoginDemoQuickAccess((prev) => !prev)}
+                aria-expanded={showLoginDemoQuickAccess}
+                className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-50 flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <FlaskConical className="w-3.5 h-3.5 text-slate-400" />
+                <span>¿Modo demostración? Ver accesos rápidos</span>
+                {showLoginDemoQuickAccess ? (
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                ) : (
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                )}
+              </button>
+
+              {showLoginDemoQuickAccess && (
+                <div className="space-y-2.5 bateas-fade-in">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginUsername('ecm@bateas.pe');
+                        setLoginPassword('Bateas2026!');
+                      }}
+                      className={`p-2.5 min-h-[54px] rounded-xl border text-left transition flex flex-col justify-center cursor-pointer ${
+                        loginUsername === 'ecm@bateas.pe'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
+                        <HardHat className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        Admin ECM
+                      </span>
+                      <span className="block text-[10px] text-slate-400 font-normal mt-0.5 truncate">
+                        ecm@bateas.pe
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginUsername('ssoma@bateas.pe');
+                        setLoginPassword('Bateas2026!');
+                      }}
+                      className={`p-2.5 min-h-[54px] rounded-xl border text-left transition flex flex-col justify-center cursor-pointer ${
+                        loginUsername === 'ssoma@bateas.pe'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
+                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        SSOMA / DHO
+                      </span>
+                      <span className="block text-[10px] text-slate-400 font-normal mt-0.5 truncate">
+                        ssoma@bateas.pe
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginUsername('garita@bateas.pe');
+                        setLoginPassword('Bateas2026!');
+                      }}
+                      className={`p-2.5 min-h-[54px] rounded-xl border text-left transition flex flex-col justify-center cursor-pointer ${
+                        loginUsername === 'garita@bateas.pe'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
+                        <IdCard className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        Control de Acceso
+                      </span>
+                      <span className="block text-[10px] text-slate-400 font-normal mt-0.5 truncate">
+                        garita@bateas.pe
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginUsername('trabajador@bateas.pe');
+                        setLoginPassword('Bateas2026!');
+                      }}
+                      className={`p-2.5 min-h-[54px] rounded-xl border text-left transition flex flex-col justify-center cursor-pointer ${
+                        loginUsername === 'trabajador@bateas.pe'
+                          ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-semibold'
+                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
+                        <UserCheck className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
+                        Trabajador
+                      </span>
+                      <span className="block text-[10px] text-slate-400 font-normal mt-0.5 truncate">
+                        trabajador@bateas.pe
+                      </span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-center text-slate-400">
+                    Contraseña de prueba: <strong className="text-slate-600">Bateas2026!</strong>
+                  </p>
+                </div>
+              )}
             </div>
           </form>
         </div>
@@ -1075,43 +1181,86 @@ export default function App() {
     );
   }
 
+  // Vista Aislada SIN Sidebar para Control de Acceso (Garita por DNI)
+  if (authUser.strictRole === 'GARITA') {
+    return (
+      <GaritaAccessPortal
+        authUser={authUser}
+        workers={workers}
+        isInitialLoading={loading && workers.length === 0}
+        standalone
+        onRefresh={() => fetchAllData()}
+        onUpdatePvcStatus={handleUpdatePvcStatus}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  const isEcmMode = authUser.strictRole === 'ECM' || activeRoleLabel === 'ADMIN_ECM';
+
   return (
-    <div className="min-h-screen flex bg-[#f0f3f7] text-slate-800 font-sans">
+    <div className="min-h-screen flex bg-[#F8FAFC] text-slate-800 font-sans">
+      <TopProgressBar active={loading} />
+      <SmartProcessLoader
+        active={Boolean(smartLoaderMode)}
+        mode={smartLoaderMode || 'default'}
+        variant="overlay"
+      />
+      <DemoModeDrawer
+        open={showDemoDrawer}
+        onClose={() => setShowDemoDrawer(false)}
+        loading={loading}
+        activeRoleLabel={activeRoleLabel}
+        showRowSimulators={showRowSimulators}
+        onToggleRowSimulators={() => setShowRowSimulators((prev) => !prev)}
+        onSwitchRoleView={(role) => {
+          setActiveRoleLabel(role);
+          if (role === 'ADMIN_ECM') setActiveNav('AFILIACION_AFILIADOS');
+          else if (role === 'SSOMA_DHO') setActiveNav('AFILIACION_EXCEPCIONES');
+          else setActiveNav('ACCESOS_CARNET_QR');
+        }}
+        onCreateDemoScenario={handleCreateDemoScenario}
+      />
+
       {/* ==========================================================================
-          SIDEBAR IZQUIERDO CORPORATIVO — RÉPLICA EXACTA DE APP BATEAS v2.1.0
+          SIDEBAR IZQUIERDO CORPORATIVO — APP BATEAS v3.0
       ========================================================================== */}
-      <aside className="w-64 bg-[#222d32] text-slate-300 flex flex-col shrink-0 select-none shadow-xl">
+      <aside className="w-64 bg-[#1E293B] text-slate-300 flex flex-col shrink-0 select-none border-r border-slate-800">
         {/* Brand Header */}
-        <div className="h-14 bg-[#1a2226] px-4 flex items-center justify-between border-b border-slate-800">
+        <div className="h-14 bg-[#0F172A] px-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-white text-[#1a2226] flex items-center justify-center font-black text-sm shadow">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-black text-sm">
               B
             </div>
             <div>
-              <span className="font-bold text-white text-sm tracking-wide block leading-none">App Bateas</span>
-              <span className="text-[10px] text-emerald-400 font-semibold">v2.1.0 · Zero-Touch MCP</span>
+              <span className="font-bold text-white text-sm tracking-tight block leading-none">App Bateas</span>
+              <span className="text-[10px] text-emerald-400 font-medium">
+                {isEcmMode ? 'Portal Contratista ECM' : 'v3.0 · Zero-Touch'}
+              </span>
             </div>
           </div>
-          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">
-            Web
+          <span className="text-[10px] bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">
+            {isEcmMode ? 'ECM' : 'Web'}
           </span>
         </div>
 
-        {/* Menú Lateral Estilo App Bateas */}
+        {/* Menú Lateral Filtrado por Rol RBAC */}
         <nav className="flex-1 py-3 text-xs space-y-0.5 overflow-y-auto">
-          <button
-            onClick={() => setActiveNav('INICIO_ACCESO_DIRECTO')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'INICIO_ACCESO_DIRECTO' || activeNav === 'INICIO_PANEL_CONTROL'
-                ? 'bg-[#1e282c] text-white border-l-4 border-sky-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <Home className="w-4 h-4 text-sky-400" />
-            <span>Inicio</span>
-          </button>
+          {!isEcmMode && (
+            <button
+              onClick={() => setActiveNav('INICIO_ACCESO_DIRECTO')}
+              className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                activeNav === 'INICIO_ACCESO_DIRECTO' || activeNav === 'INICIO_PANEL_CONTROL'
+                  ? 'bg-[#1e282c] text-white border-l-4 border-sky-400 font-bold'
+                  : 'hover:bg-[#1e282c] text-slate-300'
+              }`}
+            >
+              <Home className="w-4 h-4 text-sky-400" />
+              <span>Inicio</span>
+            </button>
+          )}
 
-          {/* Grupo Afiliaciones (Expandible como en Figura 3 del Entregable 3) */}
+          {/* Grupo Afiliaciones */}
           <div>
             <button
               onClick={() => setAfiliacionesOpen(!afiliacionesOpen)}
@@ -1140,21 +1289,23 @@ export default function App() {
                   </span>
                 </button>
 
-                <button
-                  onClick={() => setActiveNav('AFILIACION_EXCEPCIONES')}
-                  className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
-                    activeNav === 'AFILIACION_EXCEPCIONES'
-                      ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-amber-400'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>○ Bandeja Excepciones</span>
-                  {metrics?.openExceptions > 0 && (
-                    <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-1.5 rounded-full">
-                      {metrics.openExceptions}
-                    </span>
-                  )}
-                </button>
+                {!isEcmMode && (
+                  <button
+                    onClick={() => setActiveNav('AFILIACION_EXCEPCIONES')}
+                    className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
+                      activeNav === 'AFILIACION_EXCEPCIONES'
+                        ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-amber-400'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <span>○ Bandeja Excepciones</span>
+                    {metrics?.openExceptions > 0 && (
+                      <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-1.5 rounded-full">
+                        {metrics.openExceptions}
+                      </span>
+                    )}
+                  </button>
+                )}
 
                 <button
                   onClick={() => setActiveNav('AFILIACION_ELEARNING')}
@@ -1167,33 +1318,37 @@ export default function App() {
                   <span>○ Inducciones E-Learning</span>
                 </button>
 
-                <button
-                  onClick={() => setActiveNav('AFILIACION_DOCS_ESTADIA')}
-                  className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
-                    activeNav === 'AFILIACION_DOCS_ESTADIA'
-                      ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-sky-400'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>○ Documentos por estadía</span>
-                </button>
+                {!isEcmMode && (
+                  <>
+                    <button
+                      onClick={() => setActiveNav('AFILIACION_DOCS_ESTADIA')}
+                      className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
+                        activeNav === 'AFILIACION_DOCS_ESTADIA'
+                          ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-sky-400'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <span>○ Documentos por estadía</span>
+                    </button>
 
-                <button
-                  onClick={() => setActiveNav('AFILIACION_LISTA_NEGRA')}
-                  className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
-                    activeNav === 'AFILIACION_LISTA_NEGRA'
-                      ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-rose-500'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <span>○ Lista negra</span>
-                  <span className="text-[10px] bg-rose-500/30 text-rose-300 px-1.5 rounded">{blacklist.length}</span>
-                </button>
+                    <button
+                      onClick={() => setActiveNav('AFILIACION_LISTA_NEGRA')}
+                      className={`w-full pl-9 pr-4 py-2 flex items-center justify-between text-left transition cursor-pointer ${
+                        activeNav === 'AFILIACION_LISTA_NEGRA'
+                          ? 'text-white font-bold bg-[#1e282c]/70 border-l-4 border-rose-500'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      <span>○ Lista negra</span>
+                      <span className="text-[10px] bg-rose-500/30 text-rose-300 px-1.5 rounded">{blacklist.length}</span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
 
-          {/* Módulos complementarios de App Bateas */}
+          {/* Estado de Habilitación (disponible para ECM y SSOMA) */}
           <button
             onClick={() => setActiveNav('ACCESOS_CARNET_QR')}
             className={`w-full px-4 py-2.5 flex items-center justify-between transition cursor-pointer ${
@@ -1211,249 +1366,189 @@ export default function App() {
             )}
           </button>
 
-          <button
-            onClick={() => setActiveNav('INICIO_PANEL_CONTROL')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'INICIO_PANEL_CONTROL'
-                ? 'bg-[#1e282c] text-white border-l-4 border-emerald-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-emerald-400" />
-            <span>Panel de Control (KPIs)</span>
-          </button>
+          {!isEcmMode && (
+            <>
+              <button
+                onClick={() => setActiveNav('INICIO_PANEL_CONTROL')}
+                className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                  activeNav === 'INICIO_PANEL_CONTROL'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-emerald-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 text-emerald-400" />
+                <span>Panel de Control (KPIs)</span>
+              </button>
 
-          {/* Módulos Administrativos SSOMA (D.S. 024-2016-EM, Biometría, Integraciones & RV) */}
-          <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
-            <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-bold mb-1.5">
-              Torre SSOMA · D.S. 024-2016-EM
-            </p>
-          </div>
-          <button
-            onClick={() => setActiveNav('SSOMA_TORRE_CONTROL')}
-            className={`w-full px-4 py-2.5 flex items-center justify-between transition cursor-pointer ${
-              activeNav === 'SSOMA_TORRE_CONTROL'
-                ? 'bg-[#1e282c] text-white border-l-4 border-amber-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <span className="flex items-center gap-2.5">
-              <Activity className="w-4 h-4 text-amber-400" />
-              <span>Torre Control 32h / Bio</span>
-            </span>
-            {metrics?.biometricIncidentsCount > 0 && (
-              <span className="text-[10px] bg-rose-500 text-white font-bold px-1.5 rounded-full">
-                {metrics.biometricIncidentsCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveNav('SSOMA_CMS_CAPACITACION')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'SSOMA_CMS_CAPACITACION'
-                ? 'bg-[#1e282c] text-white border-l-4 border-indigo-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <BookOpen className="w-4 h-4 text-indigo-400" />
-            <span>CMS Capacitación 32h</span>
-          </button>
-          <button
-            onClick={() => setActiveNav('SSOMA_INTEGRACIONES')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'SSOMA_INTEGRACIONES'
-                ? 'bg-[#1e282c] text-white border-l-4 border-sky-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <Webhook className="w-4 h-4 text-sky-400" />
-            <span>Integraciones EMO/SCTR</span>
-          </button>
-          <button
-            onClick={() => setActiveNav('SSOMA_GESTION_CAPACITACIONES')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'SSOMA_GESTION_CAPACITACIONES'
-                ? 'bg-[#1e282c] text-white border-l-4 border-emerald-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <BookOpen className="w-4 h-4 text-emerald-400" />
-            <span>Gestión de Capacitaciones</span>
-          </button>
-          <button
-            onClick={() => setActiveNav('SSOMA_SEGUIMIENTO_REPORTES')}
-            className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
-              activeNav === 'SSOMA_SEGUIMIENTO_REPORTES'
-                ? 'bg-[#1e282c] text-white border-l-4 border-teal-400 font-bold'
-                : 'hover:bg-[#1e282c] text-slate-300'
-            }`}
-          >
-            <BarChart3 className="w-4 h-4 text-teal-400" />
-            <span>Seguimiento y Reportes</span>
-          </button>
+              {/* Módulos Administrativos SSOMA (Exclusivos SSOMA/DHO) */}
+              <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
+                <p className="text-[10px] uppercase tracking-wider text-emerald-400 font-bold mb-1.5">
+                  Torre SSOMA · D.S. 024-2016-EM
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveNav('SSOMA_TORRE_CONTROL')}
+                className={`w-full px-4 py-2.5 flex items-center justify-between transition cursor-pointer ${
+                  activeNav === 'SSOMA_TORRE_CONTROL'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-amber-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <span className="flex items-center gap-2.5">
+                  <Activity className="w-4 h-4 text-amber-400" />
+                  <span>Torre Control 32h / Bio</span>
+                </span>
+                {metrics?.biometricIncidentsCount > 0 && (
+                  <span className="text-[10px] bg-rose-500 text-white font-bold px-1.5 rounded-full">
+                    {metrics.biometricIncidentsCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveNav('SSOMA_CMS_CAPACITACION')}
+                className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                  activeNav === 'SSOMA_CMS_CAPACITACION'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-indigo-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 text-indigo-400" />
+                <span>CMS Capacitación 32h</span>
+              </button>
+              <button
+                onClick={() => setActiveNav('SSOMA_INTEGRACIONES')}
+                className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                  activeNav === 'SSOMA_INTEGRACIONES'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-sky-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <Webhook className="w-4 h-4 text-sky-400" />
+                <span>Integraciones EMO/SCTR</span>
+              </button>
+              <button
+                onClick={() => setActiveNav('SSOMA_GESTION_CAPACITACIONES')}
+                className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                  activeNav === 'SSOMA_GESTION_CAPACITACIONES'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-emerald-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 text-emerald-400" />
+                <span>Gestión de Capacitaciones</span>
+              </button>
+              <button
+                onClick={() => setActiveNav('SSOMA_SEGUIMIENTO_REPORTES')}
+                className={`w-full px-4 py-2.5 flex items-center gap-2.5 transition cursor-pointer ${
+                  activeNav === 'SSOMA_SEGUIMIENTO_REPORTES'
+                    ? 'bg-[#1e282c] text-white border-l-4 border-teal-400 font-bold'
+                    : 'hover:bg-[#1e282c] text-slate-300'
+                }`}
+              >
+                <BarChart3 className="w-4 h-4 text-teal-400" />
+                <span>Seguimiento y Reportes</span>
+              </button>
 
-          <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">
-              Módulos Nativos App Bateas
-            </p>
-          </div>
-          <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
-            <Users className="w-4 h-4" /> <span>Comedores</span>
-          </div>
-          <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
-            <Bus className="w-4 h-4" /> <span>Viajes y Transporte</span>
-          </div>
-          <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
-            <Settings className="w-4 h-4" /> <span>Maestros y Flujos</span>
-          </div>
+              <div className="pt-3 mt-3 border-t border-slate-700/60 px-4">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">
+                  Módulos Nativos App Bateas
+                </p>
+              </div>
+              <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
+                <Users className="w-4 h-4" /> <span>Comedores</span>
+              </div>
+              <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
+                <Bus className="w-4 h-4" /> <span>Viajes y Transporte</span>
+              </div>
+              <div className="px-4 py-2 flex items-center gap-2.5 text-slate-500 cursor-not-allowed">
+                <Settings className="w-4 h-4" /> <span>Maestros y Flujos</span>
+              </div>
+            </>
+          )}
         </nav>
 
-        {/* Estado del Motor MCP / Supabase en el pie del Sidebar */}
-        <div className="p-3 bg-[#1a2226] border-t border-slate-800 text-[11px] space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Motor OCR + Reglas:</span>
-            <span className="text-emerald-400 font-bold">Activo (&lt;2s)</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Supabase PostgreSQL:</span>
-            <span className="text-emerald-400 font-bold">Conectado</span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400">Servidor MCP:</span>
-            <span className="text-sky-400 font-bold">7 Tools / 3 Res</span>
+        {/* Indicador discreto de estado de servicios con tooltip informativo */}
+        <div className="px-4 py-3 bg-[#0F172A]/80 border-t border-slate-800">
+          <div
+            className="inline-flex items-center gap-2 text-[11px] text-slate-400 hover:text-slate-200 transition cursor-help"
+            title="Servicios activos · Motor OCR (<2s) · Base de datos conectada · Servidor MCP activo"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+            </span>
+            <span className="font-medium">Servicios conectados</span>
           </div>
         </div>
       </aside>
 
       {/* ==========================================================================
-          CONTENEDOR DERECHO WEB (TOPBAR + BREADCRUMB + WORKSPACE)
+          CONTENEDOR DERECHO WEB (TOPBAR LIMPIA + BREADCRUMB + WORKSPACE)
       ========================================================================== */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* TOP HEADER BLANCO ESTILO APP BATEAS */}
-        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-4 text-xs text-slate-500">
+        {/* TOP HEADER LIMPIO */}
+        <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between">
+          <div className="flex items-center gap-3 text-xs text-slate-500">
             <button
-              onClick={() => setActiveNav('INICIO_ACCESO_DIRECTO')}
-              className="hover:text-slate-900 font-semibold cursor-pointer"
+              onClick={() => setActiveNav(isEcmMode ? 'AFILIACION_AFILIADOS' : 'INICIO_ACCESO_DIRECTO')}
+              className="hover:text-slate-900 font-semibold transition cursor-pointer"
             >
-              Inicio
+              {isEcmMode ? 'Afiliados' : 'Inicio'}
             </button>
-            <span>|</span>
+            <span className="text-slate-300">/</span>
             <button
               onClick={() => fetchAllData(selectedWorker?.id)}
-              className="hover:text-slate-900 flex items-center gap-1 cursor-pointer"
+              className="hover:text-slate-900 inline-flex items-center gap-1.5 transition cursor-pointer"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-600' : ''}`} /> Sincronizar
-              Supabase
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-emerald-700' : ''}`} />
+              <span>Actualizar</span>
             </button>
           </div>
 
-          {/* Selector Rápido de Vista de Rol y Usuario */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200 text-xs">
-              <span className="text-[11px] text-slate-500 px-2 font-semibold">Vista Web Activa:</span>
-              <button
-                onClick={() => {
-                  setActiveRoleLabel('ADMIN_ECM');
-                  setActiveNav('AFILIACION_AFILIADOS');
-                }}
-                className={`px-2.5 py-1 rounded font-bold transition cursor-pointer ${
-                  activeRoleLabel === 'ADMIN_ECM'
-                    ? 'bg-emerald-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                👷 Admin ECM / Contratista
-              </button>
-              <button
-                onClick={() => {
-                  setActiveRoleLabel('SSOMA_DHO');
-                  setActiveNav('AFILIACION_EXCEPCIONES');
-                }}
-                className={`px-2.5 py-1 rounded font-bold transition cursor-pointer ${
-                  activeRoleLabel === 'SSOMA_DHO'
-                    ? 'bg-amber-500 text-slate-950 shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                🛡️ Revisor SSOMA / Médico / DHO
-              </button>
-              <button
-                onClick={() => {
-                  setActiveRoleLabel('GARITA');
-                  setActiveNav('ACCESOS_CARNET_QR');
-                }}
-                className={`px-2.5 py-1 rounded font-bold transition cursor-pointer ${
-                  activeRoleLabel === 'GARITA'
-                    ? 'bg-sky-600 text-white shadow-2xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                🚧 Control de Acceso
-              </button>
-            </div>
+          {/* Acciones derechas del header: Modo Demo discreto + Copiloto IA + Usuario */}
+          <div className="flex items-center gap-2.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setShowDemoDrawer(true)}
+              className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200 font-medium inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
+              title="Abrir panel de herramientas de demostración"
+            >
+              <FlaskConical className="w-3.5 h-3.5 text-slate-500" />
+              <span>Modo Demo</span>
+            </button>
 
-            <div className="flex items-center gap-2 text-xs text-slate-600 border-l border-slate-200 pl-4">
-              <button
-                onClick={() => setShowCopilot(!showCopilot)}
-                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" /> Copiloto Gemini IA
-              </button>
-              <span className="hidden md:inline font-semibold text-slate-700 ml-1">
-                {authUser?.fullName}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="px-2.5 py-1.5 rounded bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-200 font-bold text-xs flex items-center gap-1 cursor-pointer"
-                title="Cerrar sesión"
-              >
-                <LogOut className="w-3.5 h-3.5" /> Salir
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setShowCopilot(!showCopilot)}
+              className="px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-semibold inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Copiloto Gemini IA</span>
+            </button>
+
+            <div className="h-5 w-px bg-slate-200 mx-1 hidden sm:block" />
+
+            <span className="hidden md:inline font-semibold text-slate-700">
+              {authUser?.fullName}
+            </span>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-50 text-slate-600 hover:text-rose-700 border border-slate-200 font-medium inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
+              title="Cerrar sesión"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>Salir</span>
+            </button>
           </div>
         </header>
 
-        {/* BARRA DE TÍTULO Y BREADCRUMB */}
-        <div className="bg-white border-b border-slate-200 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+        {/* BARRA DE TÍTULO Y BREADCRUMB LIMPIA (SIN CONTROLES DEMO FIJOS) */}
+        <div className="bg-white border-b border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-normal text-slate-800 tracking-tight">Sistema de Recursos Humanos</h1>
+            <h1 className="text-lg font-bold text-slate-900 tracking-tight">Sistema de Recursos Humanos</h1>
             <p className="text-xs text-slate-500 mt-0.5">{getBreadcrumb()}</p>
-          </div>
-
-          {/* Botones 1-Clic de Simulación de Escenarios OCR Reales */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" /> Generar Caso Demo OCR:
-            </span>
-            <button
-              disabled={loading}
-              onClick={() => handleCreateDemoScenario('ZERO_TOUCH_GREEN')}
-              className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition cursor-pointer disabled:opacity-50"
-            >
-              🟢 100% Zero-Touch (Habilitado)
-            </button>
-            <button
-              disabled={loading}
-              onClick={() => handleCreateDemoScenario('EXCEPTION_AMBER')}
-              className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-amber-400 hover:bg-amber-300 text-slate-950 transition cursor-pointer disabled:opacity-50"
-            >
-              🟡 Excepción EMO (Ámbar)
-            </button>
-            <button
-              disabled={loading}
-              onClick={() => handleCreateDemoScenario('EXPIRED_RED')}
-              className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-rose-600 hover:bg-rose-500 text-white transition cursor-pointer disabled:opacity-50"
-            >
-              🔴 SCTR Vencido (Rojo)
-            </button>
-            <button
-              disabled={loading}
-              onClick={() => handleCreateDemoScenario('BLACKLISTED_RED')}
-              className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-rose-300 transition cursor-pointer disabled:opacity-50"
-            >
-              ⛔ Lista Negra
-            </button>
           </div>
         </div>
 
@@ -1695,44 +1790,44 @@ export default function App() {
                   {/* KPIs Superiores */}
                   {metrics && (
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                      <div className="p-4 rounded border border-slate-200 bg-slate-50">
-                        <span className="text-[11px] font-bold uppercase text-slate-500">Total Afiliados (Demo)</span>
-                        <p className="text-2xl font-black text-slate-900 mt-1">{metrics.totalWorkers}</p>
-                        <span className="text-[11px] text-slate-500">En Supabase PostgreSQL</span>
+                      <div className="p-4 rounded-xl border border-slate-200 bg-white">
+                        <span className="text-[11px] font-semibold uppercase text-slate-500">Total de Afiliados</span>
+                        <p className="text-2xl font-bold text-slate-900 mt-1">{metrics.totalWorkers}</p>
+                        <span className="text-[11px] text-slate-500">Padrón activo registrado</span>
                       </div>
-                      <div className="p-4 rounded border border-emerald-200 bg-emerald-50">
-                        <span className="text-[11px] font-bold uppercase text-emerald-800">Semáforo VERDE</span>
-                        <p className="text-2xl font-black text-emerald-700 mt-1">{metrics.greenCount}</p>
+                      <div className="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60">
+                        <span className="text-[11px] font-semibold uppercase text-emerald-800">Semáforo Verde</span>
+                        <p className="text-2xl font-bold text-emerald-700 mt-1">{metrics.greenCount}</p>
                         <span className="text-[11px] text-emerald-700">Habilitados en &lt; 48h</span>
                       </div>
-                      <div className="p-4 rounded border border-amber-200 bg-amber-50">
-                        <span className="text-[11px] font-bold uppercase text-amber-800">Semáforo ÁMBAR</span>
-                        <p className="text-2xl font-black text-amber-700 mt-1">{metrics.amberCount}</p>
+                      <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/60">
+                        <span className="text-[11px] font-semibold uppercase text-amber-800">Semáforo Ámbar</span>
+                        <p className="text-2xl font-bold text-amber-700 mt-1">{metrics.amberCount}</p>
                         <span className="text-[11px] text-amber-700">En Bandeja de Excepciones</span>
                       </div>
-                      <div className="p-4 rounded border border-rose-200 bg-rose-50">
-                        <span className="text-[11px] font-bold uppercase text-rose-800">Semáforo ROJO</span>
-                        <p className="text-2xl font-black text-rose-700 mt-1">{metrics.redCount}</p>
+                      <div className="p-4 rounded-xl border border-rose-200 bg-rose-50/60">
+                        <span className="text-[11px] font-semibold uppercase text-rose-800">Semáforo Rojo</span>
+                        <p className="text-2xl font-bold text-rose-700 mt-1">{metrics.redCount}</p>
                         <span className="text-[11px] text-rose-700">Doc Vencido / Lista Negra</span>
                       </div>
-                      <div className="p-4 rounded border border-indigo-200 bg-indigo-50">
-                        <span className="text-[11px] font-bold uppercase text-indigo-800">Pre-Aprobación OCR</span>
-                        <p className="text-2xl font-black text-indigo-700 mt-1">{metrics.automationRatePercent}%</p>
-                        <span className="text-[11px] text-indigo-700">Sin intervención humana</span>
+                      <div className="p-4 rounded-xl border border-slate-200 bg-white">
+                        <span className="text-[11px] font-semibold uppercase text-slate-500">Pre-Aprobación OCR</span>
+                        <p className="text-2xl font-bold text-emerald-700 mt-1">{metrics.automationRatePercent}%</p>
+                        <span className="text-[11px] text-slate-500">Sin intervención humana</span>
                       </div>
                     </div>
                   )}
 
                   {/* Gráficos de Dona Comparativos (Réplica de Figura 2 del Entregable 2) */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Dona 1: Diagnóstico Empírico AS-IS (3,585 contratistas en App Bateas v2.1.0) */}
-                    <div className="p-5 rounded border border-slate-200 bg-white space-y-4">
-                      <div className="border-b border-slate-100 pb-2">
+                    {/* Dona 1: Diagnóstico Empírico AS-IS */}
+                    <div className="p-5 rounded-xl border border-slate-200 bg-white space-y-4">
+                      <div className="border-b border-slate-100 pb-3 min-h-[60px] flex flex-col justify-center">
                         <h3 className="text-sm font-bold text-slate-800">
-                          Situación Afiliados Contratas — Diagnóstico Base (AS-IS: 3,585 registrados)
+                          Situación Afiliados Contratas — Diagnóstico Base (AS-IS: 3,585)
                         </h3>
-                        <p className="text-xs text-slate-500">
-                          Evidencia recolectada en el Panel de Control de Minera Bateas (Entregable 2, Fig. 2)
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Evidencia base recolectada en el Panel de Control de Minera Bateas
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center justify-center gap-8 py-2">
@@ -1771,13 +1866,13 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Dona 2: Situación en Tiempo Real TO-BE (Bateas Zero-Touch en Supabase) */}
-                    <div className="p-5 rounded border border-slate-200 bg-white space-y-4">
-                      <div className="border-b border-slate-100 pb-2">
+                    {/* Dona 2: Situación en Tiempo Real TO-BE */}
+                    <div className="p-5 rounded-xl border border-slate-200 bg-white space-y-4">
+                      <div className="border-b border-slate-100 pb-3 min-h-[60px] flex flex-col justify-center">
                         <h3 className="text-sm font-bold text-slate-800">
-                          Situación en Tiempo Real (TO-BE: Motor Zero-Touch + Supabase)
+                          Situación en Tiempo Real (TO-BE · Motor Zero-Touch)
                         </h3>
-                        <p className="text-xs text-slate-500">
+                        <p className="text-xs text-slate-500 mt-0.5">
                           Distribución actual del Semáforo Operativo y reducción del 80% de revisión manual
                         </p>
                       </div>
@@ -1798,7 +1893,7 @@ export default function App() {
                                   }}
                                 >
                                   <div className="w-24 h-24 rounded-full bg-white flex flex-col items-center justify-center text-center">
-                                    <span className="text-lg font-black text-emerald-600">
+                                    <span className="text-lg font-black text-emerald-700">
                                       {metrics.automationRatePercent}%
                                     </span>
                                     <span className="text-[10px] text-slate-500 font-semibold">Zero-Touch</span>
@@ -1808,20 +1903,20 @@ export default function App() {
                                   <div className="flex items-center gap-2">
                                     <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block" />
                                     <span>
-                                      <strong>{metrics.greenCount} expediente(s) en VERDE</strong> (Habilitado)
+                                      <strong>{pluralize(metrics.greenCount, 'expediente')} en Verde</strong> (Habilitado)
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <span className="w-3 h-3 rounded-xs bg-amber-500 inline-block" />
                                     <span>
-                                      <strong>{metrics.amberCount} expediente(s) en ÁMBAR</strong> (Gestión por
+                                      <strong>{pluralize(metrics.amberCount, 'expediente')} en Ámbar</strong> (Gestión por
                                       Excepción)
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <span className="w-3 h-3 rounded-xs bg-rose-600 inline-block" />
                                     <span>
-                                      <strong>{metrics.redCount} expediente(s) en ROJO</strong> (Bloqueo preventivo)
+                                      <strong>{pluralize(metrics.redCount, 'expediente')} en Rojo</strong> (Bloqueo preventivo)
                                     </span>
                                   </div>
                                   <div className="pt-2 text-[11px] text-slate-500">
@@ -1939,27 +2034,24 @@ export default function App() {
                 {selectedWorker ? (
                   <>
                     {/* Cabecera del Expediente y Semáforo Operativo */}
-                    <div className="bg-white rounded border border-slate-200 shadow-2xs p-5 space-y-4">
-                      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
-                        <div className="space-y-1">
+                    <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
+                      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                        <div className="space-y-1.5">
                           <div className="flex flex-wrap items-center gap-2">
                             {renderTrafficPill(selectedWorker.trafficLight, 'md')}
-                            <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-300">
+                            <span className="text-xs font-medium bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full">
                               DNI: {selectedWorker.dni}
                             </span>
-                            <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-300">
-                              Estadía: {selectedWorker.stayType}
+                            <span className="text-xs font-medium bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full">
+                              {formatJobProfile(selectedWorker.jobPosition)}
                             </span>
-                            <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-300">
-                              Puesto: {selectedWorker.jobPosition}
-                            </span>
-                            <span className="text-xs font-bold bg-indigo-50 text-indigo-800 px-2.5 py-1 rounded border border-indigo-200 inline-flex items-center gap-1.5">
-                              Área de ingreso:
+                            <span className="text-xs font-medium bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded-full border border-emerald-200 inline-flex items-center gap-1.5">
+                              <span>Área:</span>
                               {(authUser.strictRole === 'SSOMA' || authUser.strictRole === 'ECM') ? (
                                 <select
                                   value={selectedWorker.accessZone}
                                   onChange={(e) => handleChangeWorkerArea(selectedWorker.id, e.target.value)}
-                                  className="bg-white border border-indigo-300 rounded px-1.5 py-0.5 text-xs font-bold text-indigo-900 cursor-pointer"
+                                  className="bg-white border border-emerald-200 rounded-md px-1.5 py-0.5 text-xs font-semibold text-emerald-900 cursor-pointer focus:outline-none"
                                   title="Cambiar Área de Ingreso (asigna cursos automáticamente)"
                                 >
                                   {ACCESS_AREA_OPTIONS.map((opt) => (
@@ -1973,70 +2065,67 @@ export default function App() {
                               )}
                             </span>
                           </div>
-                          <h2 className="text-lg font-black text-slate-900 pt-1">{selectedWorker.fullName}</h2>
-                          <p className="text-xs text-slate-600">
-                            Empresa Contratista (ECM): <strong>{selectedWorker.contractor.companyName}</strong> · Estado:{' '}
-                            <strong className={selectedWorker.trafficLight === 'VERDE' ? 'text-emerald-700' : 'text-amber-700'}>
-                              {selectedWorker.trafficLight === 'VERDE' ? 'Habilitado' : 'Pendiente'}
-                            </strong>
+                          <h2 className="text-lg font-bold text-slate-900 pt-1">{selectedWorker.fullName}</h2>
+                          <p className="text-xs text-slate-500">
+                            Contratista (ECM): <strong className="text-slate-700">{selectedWorker.contractor.companyName}</strong> · Estadía: {formatStayType(selectedWorker.stayType)}
                           </p>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            onClick={() => setActiveNav('ACCESOS_CARNET_QR')}
-                            className={`px-3.5 py-2 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer ${
-                              selectedWorker.trafficLight === 'VERDE'
-                                ? 'bg-emerald-600 hover:bg-emerald-500'
-                                : 'bg-slate-700 hover:bg-slate-600'
-                            }`}
-                          >
-                            <ShieldCheck className="w-4 h-4" />
-                            Estado: {selectedWorker.trafficLight === 'VERDE' ? 'Habilitado' : 'Pendiente'}
-                          </button>
-                          {!selectedWorker.isBlacklisted && (
-                            <button
-                              onClick={() => setActiveNav('AFILIACION_ELEARNING')}
-                              className="px-3.5 py-2 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <BookOpen className="w-4 h-4" />{' '}
-                              {selectedWorker.elearningPassed ? 'Ver E-Learning (Aprobado)' : 'Rendir E-Learning Web'}
-                            </button>
-                          )}
                           {(authUser.strictRole === 'SSOMA' || authUser.strictRole === 'ECM') && (
                             <button
+                              type="button"
                               onClick={() => setShowCvProfileModal(true)}
-                              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
                             >
-                              <FileText className="w-4 h-4" /> Perfil CV Estructurado
+                              <FileText className="w-3.5 h-3.5" /> Perfil CV Estructurado
                             </button>
                           )}
+                          {!selectedWorker.isBlacklisted && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveNav('AFILIACION_ELEARNING')}
+                              className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
+                            >
+                              <BookOpen className="w-3.5 h-3.5 text-slate-500" />
+                              {selectedWorker.elearningPassed ? 'E-Learning (Aprobado)' : 'E-Learning'}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setActiveNav('ACCESOS_CARNET_QR')}
+                            className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-all duration-200 cursor-pointer"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                            Estado de Habilitación
+                          </button>
                         </div>
                       </div>
 
-                      {/* Diagnóstico en vivo del Motor de Reglas */}
+                      {/* Diagnóstico limpio */}
                       <div
-                        className={`p-3 rounded border text-xs font-semibold flex items-center justify-between ${
+                        className={`px-4 py-3 rounded-xl border text-xs font-medium flex flex-wrap items-center justify-between gap-2 ${
                           selectedWorker.trafficLight === 'VERDE'
-                            ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-800'
                             : selectedWorker.trafficLight === 'ROJO'
-                            ? 'bg-rose-50 border-rose-300 text-rose-900'
-                            : 'bg-amber-50 border-amber-300 text-amber-900'
+                            ? 'bg-rose-50/70 border-rose-200 text-rose-800'
+                            : 'bg-amber-50/70 border-amber-200 text-amber-800'
                         }`}
                       >
-                        <span>🚦 Diagnóstico del Semáforo Operativo: {selectedWorker.statusSummary}</span>
+                        <span>{selectedWorker.statusSummary}</span>
                         {selectedWorker.trafficLight === 'AMBAR' && (
                           <button
+                            type="button"
                             onClick={() => setActiveNav('AFILIACION_EXCEPCIONES')}
-                            className="underline font-bold ml-3 cursor-pointer"
+                            className="font-semibold underline underline-offset-2 cursor-pointer"
                           >
-                            Ir a Bandeja de Excepciones →
+                            Revisar en Excepciones →
                           </button>
                         )}
                       </div>
                     </div>
 
-                    {/* Tabla Web de Documentos del Expediente en 2 Etapas (Fase 1: Primer Filtro Postulación DNI + CV -> Fase 2: Habilitación EMO, SCTR, Certificados) */}
+                    {/* STEPPER HORIZONTAL UNIFICADO DE 2 PASOS (SIN DUPLICACIÓN) */}
                     {(() => {
                       const phase1Docs = selectedWorker.documents.filter((d) =>
                         ['DNI', 'CV_DOC'].includes(d.requirement.code)
@@ -2046,130 +2135,209 @@ export default function App() {
                       );
                       const isPhase1Approved =
                         phase1Docs.length > 0 && phase1Docs.every((d) => d.status === 'VERDE');
+                      const phase1GreenCount = phase1Docs.filter((d) => d.status === 'VERDE').length;
+                      const phase2GreenCount = phase2Docs.filter((d) => d.status === 'VERDE').length;
+                      const currentDocs = activeAffiliateStep === 1 ? phase1Docs : phase2Docs;
 
                       return (
-                        <div className="space-y-4">
-                          {/* STEPPER VISUAL DE 2 ETAPAS (PROPUESTA CLIENTE EMILSE) */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <div
-                              className={`p-3.5 rounded border-2 flex items-center justify-between ${
-                                isPhase1Approved
-                                  ? 'bg-emerald-50 border-emerald-500 text-emerald-950'
-                                  : 'bg-sky-50 border-sky-500 text-sky-950'
-                              }`}
-                            >
-                              <div>
-                                <span className="text-[10px] font-black uppercase tracking-wider block">
-                                  ETAPA 1 · PRIMER FILTRO DE POSTULACIÓN (SELECCIÓN)
-                                </span>
-                                <h4 className="font-bold text-xs mt-0.5">
-                                  1. Evaluación de DNI + CV Actualizado (Perfil, Formación y Especialidad)
-                                </h4>
-                              </div>
-                              <span
-                                className={`px-2.5 py-1 rounded text-[10px] font-black ${
-                                  isPhase1Approved
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-sky-600 text-white'
+                        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                          {/* Stepper horizontal limpio */}
+                          <div className="p-5 border-b border-slate-200 bg-slate-50/60">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <button
+                                type="button"
+                                onClick={() => setActiveAffiliateStep(1)}
+                                className={`p-4 rounded-xl border text-left transition-all duration-200 flex items-center justify-between gap-3 cursor-pointer ${
+                                  activeAffiliateStep === 1
+                                    ? 'bg-white border-emerald-600 ring-1 ring-emerald-500/30 shadow-2xs'
+                                    : 'bg-white/70 border-slate-200 hover:border-slate-300'
                                 }`}
                               >
-                                {isPhase1Approved ? '✅ FILTRO 1 SUPERADO' : '🔎 EN EVALUACIÓN'}
-                              </span>
-                            </div>
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span
+                                    className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center shrink-0 ${
+                                      isPhase1Approved
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : activeAffiliateStep === 1
+                                        ? 'bg-emerald-700 text-white'
+                                        : 'bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    {isPhase1Approved ? <CheckCircle2 className="w-4 h-4" /> : '1'}
+                                  </span>
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <p className="text-xs font-bold text-slate-900 leading-snug">
+                                      Paso 1: Primer Filtro (DNI + CV)
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-[11px] text-slate-500">
+                                        {phase1GreenCount} de {phase1Docs.length} aprobados
+                                      </span>
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                                          isPhase1Approved
+                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                                        }`}
+                                      >
+                                        {isPhase1Approved ? 'Aprobado' : 'En revisión'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </button>
 
-                            <div
-                              className={`p-3.5 rounded border-2 flex items-center justify-between ${
-                                isPhase1Approved
-                                  ? 'bg-white border-emerald-500 text-slate-900'
-                                  : 'bg-slate-100 border-slate-300 text-slate-500'
-                              }`}
-                            >
-                              <div>
-                                <span className="text-[10px] font-black uppercase tracking-wider block">
-                                  ETAPA 2 · DOCUMENTACIÓN DE HABILITACIÓN E INGRESO A MINA
-                                </span>
-                                <h4 className="font-bold text-xs mt-0.5">
-                                  2. Solicitud de EMO (Anexo 16), SCTR, Certificados, DDJJ y E-Learning
-                                </h4>
-                              </div>
-                              <span
-                                className={`px-2.5 py-1 rounded text-[10px] font-black flex items-center gap-1 ${
-                                  isPhase1Approved
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                                    : 'bg-slate-200 text-slate-600'
-                                }`}
-                              >
-                                {isPhase1Approved ? (
-                                  <>🔓 HABILITADA</>
-                                ) : (
-                                  <>
-                                    <Lock className="w-3 h-3" /> BLOQUEADA HASTA PASAR FILTRO 1
-                                  </>
-                                )}
-                              </span>
+                              {(() => {
+                                const phase2AllApproved =
+                                  isPhase1Approved &&
+                                  phase2Docs.length > 0 &&
+                                  phase2Docs.every((d) => d.status === 'VERDE');
+                                const phase2HasRed =
+                                  isPhase1Approved && phase2Docs.some((d) => d.status === 'ROJO');
+                                const phase2HasAmber =
+                                  isPhase1Approved && phase2Docs.some((d) => d.status === 'AMBAR');
+                                const phase2Badge = !isPhase1Approved
+                                  ? {
+                                      label: 'Bloqueada',
+                                      cls: 'bg-slate-100 text-slate-500 border-slate-200',
+                                    }
+                                  : phase2AllApproved
+                                  ? {
+                                      label: 'Completada',
+                                      cls: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                                    }
+                                  : phase2HasRed
+                                  ? {
+                                      label: 'Observada',
+                                      cls: 'bg-rose-50 text-rose-700 border-rose-200',
+                                    }
+                                  : phase2HasAmber
+                                  ? {
+                                      label: 'Con pendientes',
+                                      cls: 'bg-amber-50 text-amber-700 border-amber-200',
+                                    }
+                                  : {
+                                      label: 'Desbloqueada',
+                                      cls: 'bg-slate-100 text-slate-700 border-slate-200',
+                                    };
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveAffiliateStep(2)}
+                                    className={`p-4 rounded-xl border text-left transition-all duration-200 flex items-start justify-between gap-3 cursor-pointer ${
+                                      activeAffiliateStep === 2
+                                        ? 'bg-white border-emerald-600 ring-1 ring-emerald-500/30 shadow-2xs'
+                                        : 'bg-white/70 border-slate-200 hover:border-slate-300'
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                                      <span
+                                        className={`w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                                          !isPhase1Approved
+                                            ? 'bg-slate-100 text-slate-400'
+                                            : activeAffiliateStep === 2
+                                            ? 'bg-emerald-700 text-white'
+                                            : 'bg-emerald-50 text-emerald-700'
+                                        }`}
+                                      >
+                                        {!isPhase1Approved ? <Lock className="w-3.5 h-3.5" /> : '2'}
+                                      </span>
+                                      <div className="min-w-0 flex-1 space-y-1">
+                                        <p className="text-xs font-bold text-slate-900 leading-snug">
+                                          Paso 2: Habilitación (EMO, SCTR y Certificados)
+                                        </p>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <span className="text-[11px] text-slate-500">
+                                            {isPhase1Approved
+                                              ? `${phase2GreenCount} de ${phase2Docs.length} aprobados`
+                                              : 'Se desbloquea al completar el Paso 1'}
+                                          </span>
+                                          <span
+                                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${phase2Badge.cls}`}
+                                          >
+                                            {phase2Badge.label}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </div>
 
-                          {/* TABLA ETAPA 1: PRIMER FILTRO (SOLO DNI Y CV ACTUALIZADO) */}
-                          <div className="bg-white rounded border-2 border-sky-500 shadow-2xs overflow-hidden">
-                            <div className="px-5 py-3 bg-sky-900 text-white flex flex-wrap items-center justify-between gap-2">
-                              <div>
-                                <h3 className="font-bold text-xs uppercase tracking-wider text-sky-200">
-                                  Etapa 1 · Primer Filtro de Postulación (Solo DNI y CV Actualizado)
-                                </h3>
-                                <p className="text-[11px] text-sky-100">
-                                  Evalúa identidad (Lista Negra) y requisitos básicos del puesto (formación,
-                                  experiencia y especialidad en el CV). Solo al aprobar ambos en VERDE se solicita el
-                                  resto de documentos.
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse text-xs">
-                                <thead>
-                                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
-                                    <th className="p-3 font-bold">Filtro</th>
-                                    <th className="p-3 font-bold">Requisito Inicial de Postulación</th>
-                                    <th className="p-3 font-bold text-center">¿Es obligatorio?</th>
-                                    <th className="p-3 font-bold">Validación OCR + Perfil / Especialidad</th>
-                                    <th className="p-3 font-bold">Estado Filtro 1</th>
-                                    <th className="p-3 font-bold text-right">Acciones (Carga / OCR)</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-200">
-                                  {phase1Docs.map((doc, idx) => (
-                                    <tr key={doc.id} className="hover:bg-sky-50/40">
-                                      <td className="p-3 font-black text-sky-800">F1-{idx + 1}</td>
-                                      <td className="p-3">
-                                        <p className="font-bold text-slate-900">{doc.requirement.name}</p>
-                                        <p className="text-[11px] text-slate-600 mt-0.5">{doc.statusReason}</p>
+                          {/* Tabla limpia del paso seleccionado */}
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-slate-50 text-slate-500 uppercase text-[11px] border-b border-slate-200">
+                                  <th className="py-3 px-4 font-semibold">Requisito</th>
+                                  <th className="py-3 px-3 font-semibold">Validación OCR</th>
+                                  <th className="py-3 px-3 font-semibold">Estado</th>
+                                  <th className="py-3 px-4 font-semibold text-right">Acciones</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {currentDocs.map((doc) => {
+                                  const canUpload =
+                                    !selectedWorker.isBlacklisted &&
+                                    (activeAffiliateStep === 1 || isPhase1Approved);
+                                  return (
+                                    <tr key={doc.id} className="hover:bg-slate-50/70 transition-colors">
+                                      <td className="py-3.5 px-4">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <p className="font-semibold text-slate-900">{doc.requirement.name}</p>
+                                          {doc.requirement.isMandatory && (
+                                            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                              Obligatorio
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 mt-0.5">
+                                          {activeAffiliateStep === 2 && !isPhase1Approved && doc.status === 'PENDIENTE'
+                                            ? 'En espera de aprobación del Paso 1 (DNI + CV)'
+                                            : doc.statusReason}
+                                        </p>
                                         {doc.fileName && (
-                                          <span className="inline-block mt-1 text-[10px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                                            📄 {doc.fileName} ({doc.extractionMethod || 'OCR'})
+                                          <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                                            <FileText className="w-3 h-3" /> {doc.fileName}
                                           </span>
                                         )}
                                       </td>
-                                      <td className="p-3 text-center">
-                                        <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-[#28a745] text-white">
-                                          Sí (Filtro 1)
-                                        </span>
+
+                                      <td className="py-3.5 px-3 text-[11px] text-slate-600 space-y-0.5">
+                                        {doc.requirement.requiresValidity && (
+                                          <div>
+                                            Vigencia:{' '}
+                                            <strong className="text-slate-800">
+                                              {doc.detectedExpiryDate
+                                                ? String(doc.detectedExpiryDate).split('T')[0]
+                                                : '—'}
+                                            </strong>
+                                          </div>
+                                        )}
+                                        {isDocExpiringWithin20Days(doc.detectedExpiryDate) && (
+                                          <span className="inline-block px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold text-[10px]">
+                                            Vence en &lt;20 días
+                                          </span>
+                                        )}
+                                        <div>DNI leído: <strong className="text-slate-800">{doc.detectedDni || '—'}</strong></div>
                                       </td>
-                                      <td className="p-3 text-[11px]">
-                                        <div>
-                                          DNI leído: <strong>{doc.detectedDni || '—'}</strong>
-                                        </div>
-                                        <div className="text-slate-500">
-                                          Puesto evaluado: <strong>{selectedWorker.jobPosition}</strong>
-                                        </div>
-                                      </td>
-                                      <td className="p-3">{renderTrafficPill(doc.status)}</td>
-                                      <td className="p-3 text-right">
-                                        {!selectedWorker.isBlacklisted && (
+
+                                      <td className="py-3.5 px-3">{renderTrafficPill(doc.status)}</td>
+
+                                      <td className="py-3.5 px-4 text-right">
+                                        {canUpload ? (
                                           <div className="flex flex-col items-end gap-1.5">
-                                            <div className="flex items-center gap-1">
-                                              <label className="px-2.5 py-1 bg-[#007bff] hover:bg-blue-600 text-white text-[11px] font-bold rounded cursor-pointer inline-flex items-center gap-1 shadow-2xs">
-                                                <Upload className="w-3 h-3" /> Subir PDF/Img
+                                            <div className="flex items-center gap-1.5">
+                                              <label
+                                                className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-all duration-200 ${
+                                                  doc.status === 'PENDIENTE' || doc.status === 'ROJO'
+                                                    ? 'bg-emerald-700 hover:bg-emerald-800 text-white'
+                                                    : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+                                                }`}
+                                              >
+                                                <Upload className="w-3.5 h-3.5" /> Subir PDF/Img
                                                 <input
                                                   type="file"
                                                   accept=".pdf,.png,.jpg,.jpeg"
@@ -2177,223 +2345,72 @@ export default function App() {
                                                   onChange={(e) => {
                                                     const f = e.target.files?.[0];
                                                     if (f) handleFileUpload(selectedWorker.id, doc.requirementId, f);
+                                                    e.target.value = '';
                                                   }}
                                                 />
                                               </label>
                                               {doc.extractedText && (
                                                 <button
+                                                  type="button"
                                                   onClick={() => setInspectedDoc(doc)}
-                                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold rounded cursor-pointer"
-                                                  title="Inspeccionar texto leído por el motor OCR"
+                                                  className="p-1.5 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-lg cursor-pointer transition"
+                                                  title="Ver detalle OCR"
                                                 >
                                                   <Eye className="w-3.5 h-3.5" />
                                                 </button>
                                               )}
                                             </div>
-                                            <div className="flex items-center gap-1">
-                                              <button
-                                                onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
-                                                className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded cursor-pointer"
-                                              >
-                                                {doc.requirement.code === 'CV_DOC'
-                                                  ? 'CV Cumple Perfil (Verde)'
-                                                  : 'DNI Válido (Verde)'}
-                                              </button>
-                                              {doc.requirement.code === 'CV_DOC' && (
-                                                <button
-                                                  onClick={() =>
-                                                    handleQuickOcrSimulate(selectedWorker, doc, 'CV_MISMATCH')
-                                                  }
-                                                  className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
-                                                >
-                                                  CV Sin Especialidad (Ámbar)
-                                                </button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        )}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
 
-                          {/* TABLA ETAPA 2: DOCUMENTOS DE HABILITACIÓN (SE DESBLOQUEA SOLO AL PASAR ETAPA 1) */}
-                          <div
-                            className={`bg-white rounded border shadow-2xs overflow-hidden transition ${
-                              isPhase1Approved ? 'border-emerald-400' : 'border-slate-300 opacity-85'
-                            }`}
-                          >
-                            <div
-                              className={`px-5 py-3.5 border-b flex flex-wrap items-center justify-between gap-2 ${
-                                isPhase1Approved
-                                  ? 'bg-emerald-900 text-white border-emerald-800'
-                                  : 'bg-slate-200 text-slate-700 border-slate-300'
-                              }`}
-                            >
-                              <div>
-                                <h3 className="font-bold text-xs uppercase tracking-wider flex items-center gap-1.5">
-                                  {isPhase1Approved ? (
-                                    <>🔓 Etapa 2 Desbloqueada · Documentos de Habilitación Médica, SCTR y Certificados</>
-                                  ) : (
-                                    <>
-                                      <Lock className="w-3.5 h-3.5" /> Etapa 2 Bloqueada · Documentos Adicionales (EMO,
-                                      SCTR, Certificados, DDJJ)
-                                    </>
-                                  )}
-                                </h3>
-                                <p
-                                  className={`text-[11px] ${
-                                    isPhase1Approved ? 'text-emerald-100' : 'text-slate-600'
-                                  }`}
-                                >
-                                  {isPhase1Approved
-                                    ? 'El postulante superó el Primer Filtro (DNI + CV). Ahora puede adjuntar el Examen Médico (EMO), SCTR y certificados del puesto.'
-                                    : 'Para evitar pedir documentación excesiva desde el inicio, esta sección se habilitará automáticamente en cuanto el DNI y el CV Actualizado estén aprobados en VERDE.'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse text-xs">
-                                <thead>
-                                  <tr className="bg-slate-100 text-slate-700 border-b border-slate-200">
-                                    <th className="p-3 font-bold">#</th>
-                                    <th className="p-3 font-bold">Requisito Documental (Etapa 2)</th>
-                                    <th className="p-3 font-bold text-center">¿Es obligatorio?</th>
-                                    <th className="p-3 font-bold text-center">¿Requiere vigencia?</th>
-                                    <th className="p-3 font-bold">Vigencia / DNI Extraído (OCR)</th>
-                                    <th className="p-3 font-bold">Semáforo Doc</th>
-                                    <th className="p-3 font-bold text-right">Acciones (Carga / OCR)</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-200">
-                                  {phase2Docs.map((doc, idx) => (
-                                    <tr key={doc.id} className="hover:bg-slate-50/90">
-                                      <td className="p-3 font-semibold text-slate-500">F2-{idx + 1}</td>
-                                      <td className="p-3">
-                                        <p className="font-bold text-slate-900">{doc.requirement.name}</p>
-                                        <p className="text-[11px] text-slate-500 mt-0.5">
-                                          {!isPhase1Approved && doc.status === 'PENDIENTE'
-                                            ? '🔒 En espera de aprobación del Primer Filtro (DNI + CV)'
-                                            : doc.statusReason}
-                                        </p>
-                                        {doc.fileName && (
-                                          <span className="inline-block mt-1 text-[10px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
-                                            📄 {doc.fileName} ({doc.extractionMethod || 'OCR'})
-                                          </span>
-                                        )}
-                                      </td>
-                                      <td className="p-3 text-center">
-                                        <span
-                                          className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                                            doc.requirement.isMandatory
-                                              ? 'bg-[#28a745] text-white'
-                                              : 'bg-[#f39c12] text-white'
-                                          }`}
-                                        >
-                                          {doc.requirement.isMandatory ? 'Sí' : 'No'}
-                                        </span>
-                                      </td>
-                                      <td className="p-3 text-center">
-                                        <span
-                                          className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                                            doc.requirement.requiresValidity
-                                              ? 'bg-[#28a745] text-white'
-                                              : 'bg-[#f39c12] text-white'
-                                          }`}
-                                        >
-                                          {doc.requirement.requiresValidity ? 'Sí' : 'No'}
-                                        </span>
-                                      </td>
-                                      <td className="p-3 text-[11px]">
-                                        <div>
-                                          Vigencia:{' '}
-                                          <strong>
-                                            {doc.detectedExpiryDate
-                                              ? String(doc.detectedExpiryDate).split('T')[0]
-                                              : '—'}
-                                          </strong>
-                                        </div>
-                                        {isDocExpiringWithin20Days(doc.detectedExpiryDate) && (
-                                          <span className="inline-block mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]">
-                                            ⚠️ Próximo a vencer (&lt;20d)
-                                          </span>
-                                        )}
-                                        <div className="text-slate-500">DNI leído: {doc.detectedDni || '—'}</div>
-                                      </td>
-                                      <td className="p-3">{renderTrafficPill(doc.status)}</td>
-                                      <td className="p-3 text-right">
-                                        {!selectedWorker.isBlacklisted && (
-                                          isPhase1Approved ? (
-                                            <div className="flex flex-col items-end gap-1.5">
-                                              <div className="flex items-center gap-1">
-                                                <label className="px-2.5 py-1 bg-[#007bff] hover:bg-blue-600 text-white text-[11px] font-bold rounded cursor-pointer inline-flex items-center gap-1 shadow-2xs">
-                                                  <Upload className="w-3 h-3" /> Subir PDF/Img
-                                                  <input
-                                                    type="file"
-                                                    accept=".pdf,.png,.jpg,.jpeg"
-                                                    className="hidden"
-                                                    onChange={(e) => {
-                                                      const f = e.target.files?.[0];
-                                                      if (f) handleFileUpload(selectedWorker.id, doc.requirementId, f);
-                                                    }}
-                                                  />
-                                                </label>
-                                                {doc.extractedText && (
+                                              {showRowSimulators && (
+                                                <div className="flex items-center gap-1 flex-wrap justify-end">
                                                   <button
-                                                    onClick={() => setInspectedDoc(doc)}
-                                                    className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold rounded cursor-pointer"
-                                                    title="Inspeccionar texto leído por el motor OCR"
+                                                    type="button"
+                                                    onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
+                                                    className="px-2 py-0.5 text-[10px] font-medium bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 rounded-md transition cursor-pointer"
                                                   >
-                                                    <Eye className="w-3.5 h-3.5" />
+                                                    Simular Vigente
                                                   </button>
-                                                )}
-                                              </div>
-
-                                              <div className="flex items-center gap-1">
-                                                <button
-                                                  onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'VALID')}
-                                                  className="px-1.5 py-0.5 text-[10px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded cursor-pointer"
-                                                >
-                                                  OCR Vigente
-                                                </button>
-                                                {doc.requirement.requiresValidity && (
-                                                  <>
+                                                  {doc.requirement.code === 'CV_DOC' && (
                                                     <button
-                                                      onClick={() =>
-                                                        handleQuickOcrSimulate(selectedWorker, doc, 'UNCERTAIN')
-                                                      }
-                                                      className="px-1.5 py-0.5 text-[10px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded cursor-pointer"
+                                                      type="button"
+                                                      onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'CV_MISMATCH')}
+                                                      className="px-2 py-0.5 text-[10px] font-medium bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 rounded-md transition cursor-pointer"
                                                     >
-                                                      OCR Ámbar
+                                                      Sin Especialidad
                                                     </button>
-                                                    <button
-                                                      onClick={() =>
-                                                        handleQuickOcrSimulate(selectedWorker, doc, 'EXPIRED')
-                                                      }
-                                                      className="px-1.5 py-0.5 text-[10px] font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded cursor-pointer"
-                                                    >
-                                                      OCR Vencido
-                                                    </button>
-                                                  </>
-                                                )}
-                                              </div>
-                                            </div>
-                                          ) : (
-                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-slate-100 text-slate-500 border border-slate-300 text-[10px] font-bold">
-                                              <Lock className="w-3 h-3" /> Pase Filtro 1 (DNI + CV)
-                                            </span>
-                                          )
+                                                  )}
+                                                  {doc.requirement.requiresValidity && (
+                                                    <>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'UNCERTAIN')}
+                                                        className="px-2 py-0.5 text-[10px] font-medium bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 rounded-md transition cursor-pointer"
+                                                      >
+                                                        Observado
+                                                      </button>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleQuickOcrSimulate(selectedWorker, doc, 'EXPIRED')}
+                                                        className="px-2 py-0.5 text-[10px] font-medium bg-slate-50 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 rounded-md transition cursor-pointer"
+                                                      >
+                                                        Vencido
+                                                      </button>
+                                                    </>
+                                                  )}
+                                                </div>
+                                              )}
+                                          </div>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 border border-slate-200 text-[11px] font-medium">
+                                            <Lock className="w-3 h-3" /> Requiere Paso 1
+                                          </span>
                                         )}
                                       </td>
                                     </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
                           </div>
                         </div>
                       );
@@ -2446,83 +2463,97 @@ export default function App() {
               VISTA 3: BANDEJA DE EXCEPCIONES SPLIT-SCREEN (SSOMA / MÉDICO / DHO)
           ---------------------------------------------------------------------- */}
           {activeNav === 'AFILIACION_EXCEPCIONES' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {/* Barra Superior de Filtros por Área Revisora */}
-              <div className="bg-white p-4 rounded border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-4">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-bold text-slate-800">
-                    Bandeja Web de Gestión por Excepciones (Auditoría Focalizada SSOMA · Área Médica · DHO)
+                  <h2 className="text-base font-bold text-slate-900">
+                    Bandeja de Gestión por Excepciones
                   </h2>
-                  <p className="text-xs text-slate-500">
-                    Los documentos legibles y vigentes se aprueban automáticamente en VERDE. Aquí solo ingresan los
-                    documentos en estado ÁMBAR.
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Auditoría focalizada (SSOMA · Área Médica · DHO). Los documentos legibles y vigentes se aprueban
+                    automáticamente; aquí solo ingresan casos en estado Observado.
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {(['ALL', 'SSOMA', 'AREA_MEDICA', 'DHO', 'AREA_USUARIA'] as const).map((area) => (
                     <button
                       key={area}
+                      type="button"
                       onClick={() => setAreaFilter(area)}
-                      className={`px-3 py-1.5 rounded text-xs font-bold transition cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 cursor-pointer border ${
                         areaFilter === area
-                          ? 'bg-[#222d32] text-white'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                          ? 'bg-emerald-700 text-white border-emerald-700'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                       }`}
                     >
-                      {area === 'ALL' ? 'Todas las Áreas' : area}
+                      {area === 'ALL'
+                        ? 'Todas las Áreas'
+                        : area === 'AREA_MEDICA'
+                        ? 'Área Médica'
+                        : area === 'AREA_USUARIA'
+                        ? 'Área Usuaria'
+                        : area}
                     </button>
                   ))}
                 </div>
               </div>
 
               {filteredExceptions.length === 0 ? (
-                <div className="bg-white p-12 rounded border border-slate-200 text-center space-y-3">
-                  <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-                  <h3 className="text-base font-bold text-slate-800">
+                <div className="bg-white p-12 rounded-xl border border-slate-200 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-700" />
+                  </div>
+                  <h3 className="text-base font-bold text-slate-900">
                     Sin excepciones pendientes para el área seleccionada
                   </h3>
                   <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Todos los documentos obligatorios fueron pre-validados automáticamente o ya fueron resueltos. Puede
-                    generar un caso con excepción pulsando arriba en &ldquo;🟡 Excepción EMO (Ámbar)&rdquo;.
+                    Todos los documentos obligatorios fueron pre-validados automáticamente o ya fueron resueltos. Si
+                    necesitas probar un flujo de auditoría, abre el botón &ldquo;Modo Demo&rdquo; en la barra superior.
                   </p>
                 </div>
               ) : (
-                /* LAYOUT SPLIT-SCREEN: Cola a la izquierda (5 cols) | Visor OCR + Dictamen a la derecha (7 cols) */
+                /* LAYOUT SPLIT-SCREEN: Cola a la izquierda (5 cols) | Datos Detectados + Dictamen a la derecha (7 cols) */
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                   {/* Lista de Tickets en ÁMBAR */}
-                  <div className="lg:col-span-5 bg-white rounded border border-slate-200 shadow-2xs overflow-hidden">
-                    <div className="px-4 py-3 bg-slate-800 text-white text-xs font-bold flex items-center justify-between">
-                      <span>Cola de Documentos Observados (ÁMBAR)</span>
-                      <span>{filteredExceptions.length} ticket(s)</span>
+                  <div className="lg:col-span-5 bg-white rounded-xl border border-slate-200 overflow-hidden h-fit">
+                    <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-700 flex items-center justify-between">
+                      <span>Cola de Documentos Observados</span>
+                      <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                        {pluralize(filteredExceptions.length, 'ticket')}
+                      </span>
                     </div>
-                    <div className="divide-y divide-slate-200">
+                    <div className="divide-y divide-slate-100">
                       {filteredExceptions.map((ex) => {
                         const isSelected = activeException?.id === ex.id;
                         return (
                           <div
                             key={ex.id}
-                            onClick={() => setSelectedExceptionId(ex.id)}
-                            className={`p-4 cursor-pointer transition ${
+                            onClick={() => {
+                              setSelectedExceptionId(ex.id);
+                              setShowRawOcrText(false);
+                            }}
+                            className={`p-4 cursor-pointer transition-all duration-150 ${
                               isSelected
-                                ? 'bg-amber-50/90 border-l-4 border-amber-500'
-                                : 'hover:bg-slate-50 border-l-4 border-transparent'
+                                ? 'bg-amber-50/60 border-l-4 border-l-amber-500'
+                                : 'hover:bg-slate-50 border-l-4 border-l-transparent'
                             }`}
                           >
-                            <div className="flex items-center justify-between">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-black bg-amber-200 text-amber-950">
-                                Área: {ex.assignedArea}
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                {formatAreaName(ex.assignedArea)}
                               </span>
-                              <span className="text-[11px] font-bold text-slate-500">
+                              <span className="text-[11px] font-medium text-slate-500">
                                 DNI: {ex.workerDocument.worker.dni}
                               </span>
                             </div>
-                            <h4 className="font-bold text-xs text-slate-900 mt-1.5">
+                            <h4 className="font-semibold text-xs text-slate-900 mt-2">
                               {ex.workerDocument.requirement.name}
                             </h4>
-                            <p className="text-xs text-slate-700 font-medium">
-                              Trabajador: {ex.workerDocument.worker.fullName}
+                            <p className="text-xs text-slate-600 mt-0.5">
+                              {ex.workerDocument.worker.fullName}
                             </p>
-                            <p className="text-[11px] text-amber-800 mt-1 line-clamp-2">{ex.reasonTriggered}</p>
+                            <p className="text-[11px] text-amber-700 mt-1.5 line-clamp-2">{ex.reasonTriggered}</p>
                           </div>
                         );
                       })}
@@ -2531,73 +2562,146 @@ export default function App() {
 
                   {/* Inspector Split-Screen del Ticket Seleccionado */}
                   {activeException && (
-                    <div className="lg:col-span-7 bg-white rounded border border-slate-200 shadow-2xs p-5 space-y-4">
-                      <div className="border-b border-slate-200 pb-3 flex flex-wrap items-start justify-between gap-2">
-                        <div>
-                          <span className="text-[11px] font-black uppercase text-amber-700">
-                            Inspector Documental · Área Responsable: {activeException.assignedArea}
+                    <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 p-5 space-y-3.5">
+                      <div className="border-b border-slate-100 pb-3 flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-0.5">
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+                            Inspector Documental · Área: {formatAreaName(activeException.assignedArea)}
                           </span>
-                          <h3 className="text-base font-black text-slate-900">
+                          <h3 className="text-sm font-bold text-slate-900">
                             {activeException.workerDocument.requirement.name}
                           </h3>
-                          <p className="text-xs text-slate-600">
-                            Trabajador: <strong>{activeException.workerDocument.worker.fullName}</strong> (DNI:{' '}
-                            {activeException.workerDocument.worker.dni}) · ECM:{' '}
+                          <p className="text-xs text-slate-500">
+                            <strong className="text-slate-700">
+                              {activeException.workerDocument.worker.fullName}
+                            </strong>{' '}
+                            (DNI: {activeException.workerDocument.worker.dni}) · ECM:{' '}
                             {activeException.workerDocument.worker.contractor.companyName}
                           </p>
                         </div>
                         {renderTrafficPill('AMBAR', 'md')}
                       </div>
 
-                      <div className="p-3 rounded bg-amber-50 border border-amber-200 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <strong>Anomalía detectada por el Motor OCR:</strong> {activeException.reasonTriggered}
+                      {/* Anomalía + Botón IA (Acento Indigo exclusivo para Gemini) */}
+                      <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-amber-900 flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex-1 min-w-[220px]">
+                          <p className="font-semibold text-amber-800">Motivo de observación OCR</p>
+                          <p className="mt-0.5 text-amber-900/90">{activeException.reasonTriggered}</p>
                         </div>
-                        <button
+                        <LoadingButton
                           type="button"
-                          disabled={loading}
+                          variant="ai"
+                          isLoading={aiAuditLoading}
+                          loadingText="Analizando..."
                           onClick={() =>
                             handleRunGeminiDocAudit(activeException.workerDocument.id, activeException.id)
                           }
-                          className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow-2xs"
+                          icon={<Sparkles className="w-3.5 h-3.5" />}
                         >
-                          <Sparkles className="w-3 h-3" /> Analizar con Gemini IA
-                        </button>
+                          Analizar con Gemini IA
+                        </LoadingButton>
                       </div>
+
+                      <SmartProcessLoader active={aiAuditLoading} mode="gemini" />
+
                       {aiAuditSuggestion[activeException.workerDocument.id] && (
-                        <div className="p-3 rounded bg-indigo-50 border border-indigo-200 text-xs text-indigo-950">
-                          <strong>
-                            🤖 Dictamen Gemini ({aiAuditSuggestion[activeException.workerDocument.id].modelUsed}):
-                          </strong>{' '}
-                          {aiAuditSuggestion[activeException.workerDocument.id].summaryReason}
+                        <div className="p-3 rounded-xl bg-indigo-50/80 border border-indigo-200 text-xs text-indigo-950 space-y-1 bateas-fade-in">
+                          <div className="flex items-center gap-1.5 font-semibold text-indigo-700">
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>
+                              Dictamen Gemini IA ({aiAuditSuggestion[activeException.workerDocument.id].modelUsed})
+                            </span>
+                          </div>
+                          <p className="text-indigo-900 leading-relaxed">
+                            {aiAuditSuggestion[activeException.workerDocument.id].summaryReason}
+                          </p>
                         </div>
                       )}
 
-                      {/* Visor del Contenido Extraído por OCR */}
-                      <div>
-                        <div className="flex items-center justify-between text-xs font-bold text-slate-700 mb-1.5">
-                          <span>Evidencia / Texto Extraído del Documento ({activeException.workerDocument.fileName})</span>
-                          <span className="text-[11px] text-slate-500">
+                      {/* Tarjeta Clara de Datos Detectados + Acordeón colapsable "Ver texto crudo OCR" */}
+                      <div className="rounded-xl border border-slate-200 bg-slate-50/60 overflow-hidden">
+                        <div className="px-4 py-2.5 border-b border-slate-200/80 flex items-center justify-between bg-white">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-slate-500" />
+                            <h4 className="text-xs font-bold text-slate-900">Datos detectados</h4>
+                          </div>
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                              (activeException.workerDocument.ocrConfidence || 75) >= 85
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                            }`}
+                          >
                             Confianza OCR: {activeException.workerDocument.ocrConfidence || 75}%
                           </span>
                         </div>
-                        <pre className="p-4 rounded bg-slate-900 text-emerald-300 text-xs font-mono overflow-x-auto whitespace-pre-wrap max-h-48">
-                          {activeException.workerDocument.extractedText || 'Sin texto legible extraído.'}
-                        </pre>
+
+                        <div className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                          <div className="bg-white rounded-lg border border-slate-200/80 p-2.5">
+                            <span className="block text-[10px] font-medium text-slate-500">DNI detectado</span>
+                            <span className="font-semibold text-slate-900 mt-0.5 block">
+                              {activeException.workerDocument.detectedDni ||
+                                activeException.workerDocument.worker.dni}
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 p-2.5">
+                            <span className="block text-[10px] font-medium text-slate-500">Vigencia detectada</span>
+                            <span className="font-semibold text-slate-900 mt-0.5 block">
+                              {activeException.workerDocument.detectedExpiryDate
+                                ? String(activeException.workerDocument.detectedExpiryDate).slice(0, 10)
+                                : 'Confirmación manual'}
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 p-2.5">
+                            <span className="block text-[10px] font-medium text-slate-500">Archivo analizado</span>
+                            <span className="font-semibold text-slate-800 mt-0.5 block truncate" title={activeException.workerDocument.fileName || ''}>
+                              {activeException.workerDocument.fileName || 'documento_adjunto.pdf'}
+                            </span>
+                          </div>
+                          <div className="bg-white rounded-lg border border-slate-200/80 p-2.5">
+                            <span className="block text-[10px] font-medium text-slate-500">Método OCR</span>
+                            <span className="font-semibold text-slate-800 mt-0.5 block">
+                              {activeException.workerDocument.extractionMethod || 'OCR Automático'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Acordeón colapsado por defecto para texto crudo OCR */}
+                        <div className="border-t border-slate-200/80 bg-white">
+                          <button
+                            type="button"
+                            onClick={() => setShowRawOcrText((prev) => !prev)}
+                            className="w-full px-4 py-2 flex items-center justify-between text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer"
+                          >
+                            <span>Ver texto crudo OCR</span>
+                            {showRawOcrText ? (
+                              <ChevronDown className="w-4 h-4 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-slate-400" />
+                            )}
+                          </button>
+                          {showRawOcrText && (
+                            <div className="px-4 pb-3 bateas-fade-in">
+                              <pre className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap max-h-40 leading-relaxed">
+                                {activeException.workerDocument.extractedText || 'Sin texto legible extraído.'}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
-                      {/* Formulario de Dictamen Humano */}
+                      {/* Formulario de Dictamen Humano con barra fija visible */}
                       {(() => {
                         const fState = resolveForm[activeException.id] || {
-                          reviewerName: `Víctor Cayata (${activeException.assignedArea})`,
+                          reviewerName: `Víctor Cayata (${formatAreaName(activeException.assignedArea)})`,
                           comment: 'Verificado manualmente conforme a documento original.',
                           manualDate: '31/12/2026',
                         };
                         return (
-                          <div className="space-y-3 pt-2 border-t border-slate-200">
+                          <div className="space-y-3 pt-2 border-t border-slate-100">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Especialista Revisor Autorizado
                                 </label>
                                 <input
@@ -2609,11 +2713,11 @@ export default function App() {
                                       [activeException.id]: { ...fState, reviewerName: e.target.value },
                                     })
                                   }
-                                  className="w-full border border-slate-300 rounded px-3 py-1.5 text-xs"
+                                  className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
                                 />
                               </div>
                               <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">
+                                <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                   Fecha de Vigencia Confirmada (DD/MM/YYYY)
                                 </label>
                                 <input
@@ -2626,12 +2730,12 @@ export default function App() {
                                     })
                                   }
                                   placeholder="31/12/2026"
-                                  className="w-full border border-slate-300 rounded px-3 py-1.5 text-xs"
+                                  className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
                                 />
                               </div>
                             </div>
                             <div>
-                              <label className="block text-xs font-bold text-slate-700 mb-1">
+                              <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                                 Comentario / Justificación de Auditoría
                               </label>
                               <textarea
@@ -2643,24 +2747,32 @@ export default function App() {
                                     [activeException.id]: { ...fState, comment: e.target.value },
                                   })
                                 }
-                                className="w-full border border-slate-300 rounded px-3 py-1.5 text-xs"
+                                className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
                               />
                             </div>
-                            <div className="flex flex-wrap items-center gap-3 pt-1">
-                              <button
+                            <div className="sticky bottom-0 bg-white/95 backdrop-blur-xs border-t border-slate-200 -mx-5 px-5 py-3 flex flex-wrap items-center gap-3 rounded-b-xl">
+                              <LoadingButton
+                                type="button"
+                                variant="primary"
+                                isLoading={resolvingDecision === 'APPROVED'}
+                                loadingText="Aprobando..."
                                 disabled={loading}
                                 onClick={() => handleResolveException(activeException.id, 'APPROVED')}
-                                className="px-4 py-2 bg-[#28a745] hover:bg-emerald-600 text-white text-xs font-bold rounded shadow-2xs cursor-pointer"
+                                icon={<CheckCircle2 className="w-4 h-4" />}
                               >
-                                ✅ Validar y Aprobar Documento (Pasa a VERDE)
-                              </button>
-                              <button
+                                Validar y Aprobar Documento
+                              </LoadingButton>
+                              <LoadingButton
+                                type="button"
+                                variant="danger"
+                                isLoading={resolvingDecision === 'REJECTED'}
+                                loadingText="Observando..."
                                 disabled={loading}
                                 onClick={() => handleResolveException(activeException.id, 'REJECTED')}
-                                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded shadow-2xs cursor-pointer"
+                                icon={<XCircle className="w-4 h-4" />}
                               >
-                                ❌ Observar y Rechazar (Pasa a ROJO para subsanación ECM)
-                              </button>
+                                Observar y Rechazar
+                              </LoadingButton>
                             </div>
                           </div>
                         );
@@ -2673,110 +2785,171 @@ export default function App() {
           )}
 
           {/* ----------------------------------------------------------------------
-              VISTA 4: TABLA MAESTRA "DOCUMENTOS POR ESTADÍA" (FIGURA 3 ENTREGABLE 3)
+              VISTA 4: TABLA MAESTRA "DOCUMENTOS POR ESTADÍA" (DESIGN SYSTEM v3.0)
           ---------------------------------------------------------------------- */}
-          {activeNav === 'AFILIACION_DOCS_ESTADIA' && (
-            <div className="bg-white rounded border border-slate-200 shadow-2xs p-6 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-3">
-                <h2 className="text-base font-bold text-slate-800">Documentos por estadía</h2>
-                <span className="text-xs text-slate-500">Inicio / Afiliación / Documentos por estadía</span>
-              </div>
+          {activeNav === 'AFILIACION_DOCS_ESTADIA' && (() => {
+            const filteredRequirements = requirementsMaster.filter(
+              (r) =>
+                !estadiaSearch.trim() ||
+                r.name.toLowerCase().includes(estadiaSearch.toLowerCase()) ||
+                r.code.toLowerCase().includes(estadiaSearch.toLowerCase()) ||
+                formatStayType(r.stayType).toLowerCase().includes(estadiaSearch.toLowerCase())
+            );
+            return (
+              <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                  <div>
+                    <h2 className="text-base font-bold text-slate-900">Documentos por Estadía</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Catálogo maestro de requisitos obligatorios, vigencia y área responsable por perfil de ingreso.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                    {pluralize(filteredRequirements.length, 'requisito')}
+                  </span>
+                </div>
 
-              {/* Buscador + Botón Aplicar idéntico a la captura de App Bateas */}
-              <div className="flex flex-wrap items-center gap-3">
-                <input
-                  type="text"
-                  value={estadiaSearch}
-                  onChange={(e) => setEstadiaSearch(e.target.value)}
-                  placeholder="Buscar por descripción o tipo de estadía..."
-                  className="w-80 border border-slate-300 rounded px-3 py-1.5 text-xs"
-                />
-                <button className="px-8 py-1.5 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded cursor-pointer">
-                  Aplicar
-                </button>
-              </div>
+                {/* Buscador y acciones homologadas al Design System v3.0 */}
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        value={estadiaSearch}
+                        onChange={(e) => setEstadiaSearch(e.target.value)}
+                        placeholder="Buscar por descripción o tipo de estadía..."
+                        className="w-72 sm:w-80 pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600"
+                      />
+                    </div>
+                    <LoadingButton
+                      type="button"
+                      variant="primary"
+                      onClick={() => fetchAllData(selectedWorker?.id)}
+                      isLoading={loading}
+                      loadingText="Aplicando..."
+                    >
+                      Aplicar
+                    </LoadingButton>
+                    {estadiaSearch.trim() && (
+                      <LoadingButton
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setEstadiaSearch('')}
+                      >
+                        Limpiar
+                      </LoadingButton>
+                    )}
+                  </div>
 
-              <div className="flex items-center gap-1.5 pt-1">
-                <button
-                  onClick={() => fetchAllData(selectedWorker?.id)}
-                  className="w-7 h-7 rounded bg-[#28a745] text-white flex items-center justify-center text-xs font-bold cursor-pointer"
-                  title="Sincronizar maestro"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-              </div>
+                  <LoadingButton
+                    type="button"
+                    variant="secondary"
+                    onClick={() => fetchAllData(selectedWorker?.id)}
+                    isLoading={loading}
+                    loadingText="Sincronizando..."
+                    icon={<RefreshCw className="w-3.5 h-3.5" />}
+                  >
+                    Sincronizar maestro
+                  </LoadingButton>
+                </div>
 
-              {/* Tabla Maestra con las banderas ¿Es obligatorio? y ¿Requiere vigencia? */}
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs border border-slate-200">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-700 border-b border-slate-200">
-                      <th className="p-2.5 border-r border-slate-200 font-bold">#</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold">Tipo de Estadía</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold">Descripción</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold">Perfil / Puesto</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold text-center">¿Es obligatorio?</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold text-center">¿Requiere vigencia?</th>
-                      <th className="p-2.5 border-r border-slate-200 font-bold">Área Excepción</th>
-                      <th className="p-2.5 font-bold text-center">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200">
-                    {requirementsMaster
-                      .filter(
-                        (r) =>
-                          !estadiaSearch.trim() ||
-                          r.name.toLowerCase().includes(estadiaSearch.toLowerCase()) ||
-                          r.code.toLowerCase().includes(estadiaSearch.toLowerCase())
-                      )
-                      .map((r, index) => (
-                        <tr key={r.id} className="hover:bg-slate-50">
-                          <td className="p-2.5 border-r border-slate-200 text-slate-600">{index + 1}</td>
-                          <td className="p-2.5 border-r border-slate-200 text-slate-600 font-medium">
-                            {r.stayType.replace('_', ' ')}
-                          </td>
-                          <td className="p-2.5 border-r border-slate-200 font-bold text-slate-800">{r.name}</td>
-                          <td className="p-2.5 border-r border-slate-200 text-slate-500">
-                            {r.applicableJob || 'TODOS LOS PERFILES'}
-                          </td>
-                          <td className="p-2.5 border-r border-slate-200 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${
-                                r.isMandatory ? 'bg-[#28a745]' : 'bg-[#f39c12]'
-                              }`}
-                            >
-                              {r.isMandatory ? 'Sí' : 'No'}
-                            </span>
-                          </td>
-                          <td className="p-2.5 border-r border-slate-200 text-center">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold text-white ${
-                                r.requiresValidity ? 'bg-[#28a745]' : 'bg-[#f39c12]'
-                              }`}
-                            >
-                              {r.requiresValidity ? 'Sí' : 'No'}
-                            </span>
-                          </td>
-                          <td className="p-2.5 border-r border-slate-200 font-semibold text-slate-700">
-                            {r.responsibleArea}
-                          </td>
-                          <td className="p-2.5 text-center">
-                            <div className="inline-flex items-center gap-1">
-                              <span className="w-6 h-6 rounded bg-[#28a745] text-white inline-flex items-center justify-center">
-                                <Settings className="w-3.5 h-3.5" />
-                              </span>
-                              <span className="w-6 h-6 rounded bg-[#dc3545] text-white inline-flex items-center justify-center">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </span>
-                            </div>
+                {/* Tabla Maestra homologada */}
+                <div className="rounded-xl border border-slate-200 overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                        <th className="py-3.5 px-4">#</th>
+                        <th className="py-3.5 px-3">Tipo de Estadía</th>
+                        <th className="py-3.5 px-3">Descripción</th>
+                        <th className="py-3.5 px-3">Perfil / Puesto</th>
+                        <th className="py-3.5 px-3 text-center">¿Es obligatorio?</th>
+                        <th className="py-3.5 px-3 text-center">¿Requiere vigencia?</th>
+                        <th className="py-3.5 px-3">Área Excepción</th>
+                        <th className="py-3.5 px-4 text-right">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {filteredRequirements.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-10 text-center text-slate-400">
+                            No se encontraron requisitos para &ldquo;{estadiaSearch}&rdquo;.
                           </td>
                         </tr>
-                      ))}
-                  </tbody>
-                </table>
+                      ) : (
+                        filteredRequirements.map((r, index) => (
+                          <tr key={r.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3 px-4 text-slate-500 font-medium">{index + 1}</td>
+                            <td className="py-3 px-3 text-slate-700 font-medium whitespace-nowrap">
+                              {formatStayType(r.stayType)}
+                            </td>
+                            <td className="py-3 px-3 font-semibold text-slate-900">{r.name}</td>
+                            <td className="py-3 px-3 text-slate-600 whitespace-nowrap">
+                              {formatJobProfile(r.applicableJob)}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span
+                                className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                  r.isMandatory
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                {r.isMandatory ? 'Sí' : 'No'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span
+                                className={`inline-flex px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                  r.requiresValidity
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                                }`}
+                              >
+                                {r.requiresValidity ? 'Sí' : 'No'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 font-medium text-slate-700 whitespace-nowrap">
+                              {formatAreaName(r.responsibleArea)}
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  aria-label="Editar requisito"
+                                  title="Editar requisito"
+                                  onClick={() =>
+                                    showNotice('info', `Configuración del requisito "${r.name}" gestionada por SSOMA.`)
+                                  }
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition cursor-pointer"
+                                >
+                                  <Settings className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Eliminar requisito"
+                                  title="Eliminar requisito"
+                                  onClick={() =>
+                                    showNotice(
+                                      'info',
+                                      `Los requisitos normativos D.S. 024-2016-EM están protegidos contra eliminación accidental.`
+                                    )
+                                  }
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* ----------------------------------------------------------------------
               VISTA 5: MÓDULO LISTA NEGRA (CRUCE AUTOMÁTICO DHO)
@@ -3082,137 +3255,15 @@ export default function App() {
               VISTA 7: ESTADO DE HABILITACIÓN POR DNI Y ÁREA DE INGRESO (SIN QR)
           ---------------------------------------------------------------------- */}
           {activeNav === 'ACCESOS_CARNET_QR' && (
-            <div className="space-y-6">
-              {/* Consulta rápida por DNI */}
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-4">
-                  <div>
-                    <span className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">
-                      Control de Accesos · Consulta Directa por DNI
-                    </span>
-                    <h2 className="text-lg font-bold text-slate-900 mt-0.5">
-                      Estado de Habilitación de Personal
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Verifica si un trabajador está Habilitado o Pendiente según su DNI y el Área de Ingreso asignada.
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={garitaVerifyCode}
-                      onChange={(e) => setGaritaVerifyCode(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleVerifyGaritaQr()}
-                      placeholder="Ingresa DNI de 8 dígitos..."
-                      className="w-60 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold"
-                    />
-                    <button
-                      onClick={() => handleVerifyGaritaQr()}
-                      disabled={loading}
-                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
-                    >
-                      Consultar DNI
-                    </button>
-                  </div>
-                </div>
-
-                {garitaVerifyResult && (
-                  <div
-                    className={`p-4 rounded-xl border text-xs space-y-1.5 ${
-                      garitaVerifyResult.accessGranted
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                        : 'bg-amber-50 border-amber-200 text-amber-950'
-                    }`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-bold text-sm flex items-center gap-2">
-                        {garitaVerifyResult.accessGranted ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        ) : (
-                          <Clock className="w-4 h-4 text-amber-600" />
-                        )}
-                        Estado: {garitaVerifyResult.accessGranted ? 'HABILITADO' : 'PENDIENTE / NO HABILITADO'}
-                      </span>
-                      {garitaVerifyResult.worker && (
-                        <span className="text-xs font-semibold bg-white px-2.5 py-1 rounded-full border border-slate-200">
-                          DNI: {garitaVerifyResult.worker.dni} · {getAreaLabel(garitaVerifyResult.worker.accessZone)}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-slate-700">{garitaVerifyResult.reason}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Tarjetas simples de Estado de Habilitación por trabajador (sin QR) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                {workers.map((w) => {
-                  const isEnabled = w.trafficLight === 'VERDE' && !w.isBlacklisted;
-                  return (
-                    <div
-                      key={w.id}
-                      className={`bg-white rounded-2xl border p-5 shadow-2xs flex flex-col justify-between gap-4 ${
-                        isEnabled ? 'border-emerald-200' : 'border-slate-200'
-                      }`}
-                    >
-                      <div className="space-y-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
-                              isEnabled
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-amber-50 text-amber-800 border border-amber-200'
-                            }`}
-                          >
-                            {isEnabled ? (
-                              <CheckCircle2 className="w-3.5 h-3.5" />
-                            ) : (
-                              <Clock className="w-3.5 h-3.5" />
-                            )}
-                            {isEnabled ? 'Habilitado' : 'Pendiente'}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-500">DNI: {w.dni}</span>
-                        </div>
-
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-900">{w.fullName}</h4>
-                          <p className="text-xs text-slate-500 mt-0.5">{w.contractor.companyName}</p>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
-                          <div className="flex justify-between text-slate-600">
-                            <span>Área de ingreso</span>
-                            <strong className="text-slate-900">{getAreaLabel(w.accessZone)}</strong>
-                          </div>
-                          <div className="flex justify-between text-slate-600">
-                            <span>Puesto</span>
-                            <strong className="text-slate-800">{w.jobPosition}</strong>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex items-center justify-between gap-2">
-                        <button
-                          onClick={() => handleVerifyGaritaQr(w.dni)}
-                          className="flex-1 py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
-                        >
-                          Verificar por DNI
-                        </button>
-                        {w.digitalBadge && w.digitalBadge.pvcPrintStatus === 'QUEUED_GARITA' && (
-                          <button
-                            onClick={() => handleUpdatePvcStatus(w.digitalBadge!.id, 'PRINTED')}
-                            className="py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Printer className="w-3.5 h-3.5" /> PVC
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <GaritaAccessPortal
+              authUser={authUser}
+              workers={workers}
+              isInitialLoading={loading && workers.length === 0}
+              standalone={false}
+              onRefresh={() => fetchAllData()}
+              onUpdatePvcStatus={handleUpdatePvcStatus}
+              onLogout={handleLogout}
+            />
           )}
         </main>
       </div>

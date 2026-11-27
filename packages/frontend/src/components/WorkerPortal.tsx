@@ -18,6 +18,13 @@ import {
 } from 'lucide-react';
 import { AuthUser } from '../types/bateas';
 import { downloadOfficialCertificatePdf } from '../utils/certificatePdf';
+import { pluralize } from '../utils/formatters';
+import {
+  LoadingButton,
+  SkeletonCard,
+  SmartProcessLoader,
+  TopProgressBar,
+} from './ui/LoadingStates';
 
 interface WorkerPortalProps {
   authUser: AuthUser;
@@ -112,7 +119,8 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
   const [courseFeedback, setCourseFeedback] = useState<string | null>(null);
   const [demoFastMode, setDemoFastMode] = useState<boolean>(true);
-  const [submitting, setSubmitting] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<'watch' | 'exam' | 'pdf' | null>(null);
+  const [successAction, setSuccessAction] = useState<'watch' | 'exam' | 'pdf' | null>(null);
 
   const fetchDashboard = async () => {
     if (!authUser.workerId) {
@@ -141,9 +149,14 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
     fetchDashboard();
   }, [authUser.workerId]);
 
+  const flashSuccess = (action: 'watch' | 'exam' | 'pdf') => {
+    setSuccessAction(action);
+    window.setTimeout(() => setSuccessAction(null), 1800);
+  };
+
   const handleRecordWatch = async () => {
     if (!authUser.workerId || !activeCourse) return;
-    setSubmitting(true);
+    setSubmittingAction('watch');
     try {
       const res = await fetch(`/api/v1/courses/worker/${authUser.workerId}/watch`, {
         method: 'POST',
@@ -160,18 +173,19 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
 
       if (res.success) {
         setCourseFeedback('Avance registrado correctamente.');
+        flashSuccess('watch');
         await fetchDashboard();
       } else {
         setCourseFeedback(res.error || 'No se pudo registrar el avance.');
       }
     } finally {
-      setSubmitting(false);
+      setSubmittingAction(null);
     }
   };
 
   const handleSubmitExam = async () => {
     if (!authUser.workerId || !activeCourse) return;
-    setSubmitting(true);
+    setSubmittingAction('exam');
     try {
       const res = await fetch(`/api/v1/courses/worker/${authUser.workerId}/exam`, {
         method: 'POST',
@@ -191,12 +205,51 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
             ? `¡Aprobado! Obtuviste ${res.data.score}%.`
             : `Puntaje obtenido: ${res.data.score}% (mínimo ${res.data.minPassScore}%). Intenta nuevamente.`
         );
+        if (res.data.passed) flashSuccess('exam');
         await fetchDashboard();
       } else {
         setCourseFeedback(res.error || 'No se pudo enviar la evaluación.');
       }
     } finally {
-      setSubmitting(false);
+      setSubmittingAction(null);
+    }
+  };
+
+  const handleDownloadCertificate = async () => {
+    if (!dashboard?.certificate || !dashboard.workerInfo) return;
+    setSubmittingAction('pdf');
+    try {
+      const worker = dashboard.workerInfo;
+      await downloadOfficialCertificatePdf({
+        workerName: worker.fullName,
+        workerDni: worker.dni,
+        jobPosition: worker.jobPosition,
+        contractorName: worker.contractorName,
+        areaLabel: worker.areaLabel,
+        verificationCode: dashboard.certificate.verificationCode,
+        issuedAt: dashboard.certificate.issuedAt,
+        issuedBy: dashboard.certificate.issuedBy,
+        totalHours: dashboard.totalCompletedHours,
+        virtualHours: dashboard.daySummary
+          .filter((d) => d.modality === 'VIRTUAL')
+          .reduce((acc, d) => acc + d.completedHours, 0),
+        presentialHours: dashboard.daySummary
+          .filter((d) => d.modality === 'PRESENCIAL')
+          .reduce((acc, d) => acc + d.completedHours, 0),
+        averageScore: dashboard.certificate.averageScore ?? null,
+        dayBreakdown: dashboard.daySummary
+          .filter((d) => d.requiredHours > 0)
+          .map((d) => ({
+            dayNumber: d.dayNumber,
+            title: d.title,
+            modality: d.modality,
+            hours: d.requiredHours,
+            status: d.allCompleted ? 'COMPLETADO' : 'PENDIENTE',
+          })),
+      });
+      flashSuccess('pdf');
+    } finally {
+      setSubmittingAction(null);
     }
   };
 
@@ -210,7 +263,7 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
     if (item.status === 'IN_PROGRESS' || item.progressPercent > 0) {
       return {
         label: 'En curso',
-        className: 'bg-sky-50 text-sky-700 border border-sky-200',
+        className: 'bg-slate-100 text-slate-700 border border-slate-200',
       };
     }
     return {
@@ -229,12 +282,12 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
     return (
       <div
         key={item.id}
-        className={`bg-white rounded-2xl border p-6 transition-all flex flex-col justify-between gap-5 ${
+        className={`bg-white rounded-xl border p-6 transition-all duration-200 ease-out flex flex-col justify-between gap-5 ${
           isCompleted
-            ? 'border-emerald-200/80 shadow-2xs'
+            ? 'border-emerald-200/90'
             : isLocked
             ? 'border-slate-200 bg-slate-50/70 opacity-75'
-            : 'border-slate-200 shadow-xs hover:border-slate-300 hover:shadow-sm'
+            : 'border-slate-200 hover:border-slate-300 hover:shadow-xs'
         }`}
       >
         <div className="space-y-3">
@@ -244,9 +297,9 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
             </span>
             <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
               {isPresential ? (
-                <MapPin className="w-3.5 h-3.5 text-amber-500" />
+                <MapPin className="w-3.5 h-3.5 text-amber-600" />
               ) : (
-                <Monitor className="w-3.5 h-3.5 text-sky-500" />
+                <Monitor className="w-3.5 h-3.5 text-slate-400" />
               )}
               {isPresential ? 'Presencial' : 'E-learning'}
             </span>
@@ -267,7 +320,7 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
 
         <div className="pt-1">
           {isCompleted ? (
-            <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-semibold flex items-center justify-center gap-2">
+            <div className="w-full py-2.5 px-4 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200/70 text-xs font-semibold flex items-center justify-center gap-2">
               <CheckCircle2 className="w-4 h-4" />
               Curso completado
             </div>
@@ -277,23 +330,24 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
               Completa la Etapa 1 para continuar
             </div>
           ) : isPresential ? (
-            <div className="w-full py-2.5 px-4 rounded-xl bg-amber-50/70 text-amber-800 text-xs font-medium flex items-center justify-center gap-2">
+            <div className="w-full py-2.5 px-4 rounded-xl bg-amber-50/70 text-amber-800 border border-amber-200/60 text-xs font-medium flex items-center justify-center gap-2">
               <MapPin className="w-3.5 h-3.5" />
               Sesión presencial programada por SSOMA
             </div>
           ) : (
-            <button
+            <LoadingButton
               type="button"
+              variant="primary"
+              icon={<Play className="w-4 h-4" />}
               onClick={() => {
                 setActiveCourse(item);
                 setQuizAnswers({});
                 setCourseFeedback(null);
               }}
-              className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
+              className="w-full py-2.5 min-h-[44px] text-sm rounded-xl"
             >
-              <Play className="w-4 h-4" />
               {isInProgress ? 'Continuar' : 'Iniciar'}
-            </button>
+            </LoadingButton>
           )}
         </div>
       </div>
@@ -304,39 +358,44 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
   const isEnabled = Boolean(worker?.isEnabled);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-800">
+      <TopProgressBar active={loading || submittingAction !== null} />
+
       {/* Barra superior limpia sin sidebar administrativo */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white font-black flex items-center justify-center text-base">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-emerald-700 text-white font-black flex items-center justify-center text-base shrink-0">
               B
             </div>
-            <div>
-              <h1 className="text-sm font-bold text-slate-900">Portal del Trabajador</h1>
-              <p className="text-xs text-slate-500">Minera Bateas · Capacitación y Habilitación</p>
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-slate-900 truncate">Portal del Trabajador</h1>
+              <p className="text-[11px] sm:text-xs text-slate-500 truncate">
+                Minera Bateas · Capacitación y Habilitación
+              </p>
             </div>
           </div>
 
           <button
             type="button"
             onClick={onLogout}
-            className="px-3.5 py-2 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 text-xs font-semibold flex items-center gap-2 transition cursor-pointer"
+            className="px-3 sm:px-3.5 py-2 min-h-[44px] sm:min-h-0 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 hover:text-rose-700 text-slate-600 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-all duration-200 cursor-pointer"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            Cerrar sesión
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            <span className="sm:hidden">Salir</span>
+            <span className="hidden sm:inline">Cerrar sesión</span>
           </button>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
         {accessDeniedMessage && (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 text-xs text-amber-900">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4 text-xs text-amber-800 bateas-fade-in">
             <span>{accessDeniedMessage}</span>
             <button
               type="button"
               onClick={onDismissAccessDenied}
-              className="font-semibold text-amber-800 hover:underline cursor-pointer"
+              className="font-semibold text-amber-900 hover:underline cursor-pointer"
             >
               Entendido
             </button>
@@ -344,26 +403,42 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
         )}
 
         {loading ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-16 text-center text-sm text-slate-400">
-            Cargando tu ruta de capacitación...
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+              <SkeletonCard variant="summary" className="lg:col-span-8" />
+              <SkeletonCard variant="kpi" className="lg:col-span-4" />
+            </div>
+            <div className="space-y-4">
+              <div className="h-5 w-48 rounded bateas-shimmer" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <SkeletonCard variant="course" />
+                <SkeletonCard variant="course" />
+              </div>
+            </div>
+            <div className="space-y-4">
+              <div className="h-5 w-64 rounded bateas-shimmer" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <SkeletonCard variant="course" />
+                <SkeletonCard variant="course" />
+              </div>
+            </div>
           </div>
         ) : !dashboard || !worker ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-sm text-slate-500">
+          <div className="bg-white rounded-xl border border-slate-200 p-12 text-center text-sm text-slate-500">
             No se encontró un perfil de trabajador asociado a esta cuenta.
           </div>
         ) : (
           <>
             {/* 1. ENCABEZADO RESUMIDO + ESTADO DE HABILITACIÓN (SIN QR) */}
             <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-              {/* Tarjeta principal del trabajador y barra de progreso */}
-              <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 p-6 shadow-2xs flex flex-col justify-between gap-6">
+              <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200 p-6 flex flex-col justify-between gap-6">
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 px-3 py-1 rounded-full font-medium">
                       <Building2 className="w-3.5 h-3.5 text-slate-500" />
                       {worker.contractorName}
                     </span>
-                    <span className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full font-semibold">
+                    <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-semibold">
                       <MapPin className="w-3.5 h-3.5" />
                       {worker.areaLabel}
                     </span>
@@ -386,19 +461,16 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                   </div>
                   <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                      className="h-full bg-emerald-600 rounded-full transition-all duration-500 ease-out"
                       style={{ width: `${dashboard.overallProgressPercent}%` }}
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Tarjeta simple: Estado de Habilitación (Habilitado / Pendiente) por DNI y Área — SIN QR */}
               <div
-                className={`lg:col-span-4 rounded-2xl border p-6 shadow-2xs flex flex-col justify-between gap-4 ${
-                  isEnabled
-                    ? 'bg-emerald-50/70 border-emerald-200'
-                    : 'bg-white border-slate-200'
+                className={`lg:col-span-4 rounded-xl border p-6 flex flex-col justify-between gap-4 ${
+                  isEnabled ? 'bg-emerald-50/70 border-emerald-200' : 'bg-white border-slate-200'
                 }`}
               >
                 <div className="space-y-3">
@@ -407,16 +479,16 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                       Estado de Habilitación
                     </span>
                     <ShieldCheck
-                      className={`w-5 h-5 ${isEnabled ? 'text-emerald-600' : 'text-amber-500'}`}
+                      className={`w-5 h-5 ${isEnabled ? 'text-emerald-700' : 'text-amber-600'}`}
                     />
                   </div>
 
                   <div>
                     <span
-                      className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-sm font-bold ${
+                      className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-sm font-semibold border ${
                         isEnabled
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-amber-100 text-amber-800'
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-amber-50 text-amber-700 border-amber-200'
                       }`}
                     >
                       {isEnabled ? (
@@ -430,14 +502,29 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                 </div>
 
                 <div className="pt-3 border-t border-slate-200/70 space-y-1.5 text-xs">
-                  <div className="flex justify-between text-slate-600">
-                    <span>DNI</span>
-                    <strong className="text-slate-900">{worker.dni}</strong>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>Área de ingreso</span>
-                    <strong className="text-slate-900 text-right">{worker.areaLabel}</strong>
-                  </div>
+                  {isEnabled ? (
+                    <p className="text-emerald-800 leading-relaxed font-medium">
+                      Tu habilitación está activa. Puedes presentar tu DNI en Garita para ingresar a tu área asignada.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-slate-600 leading-relaxed">
+                        {Math.max(dashboard.totalCount - dashboard.completedCount, 0) > 0
+                          ? `Te falta completar ${pluralize(
+                              Math.max(dashboard.totalCount - dashboard.completedCount, 0),
+                              'curso obligatorio',
+                              'cursos obligatorios'
+                            )} y validar tu documentación para quedar habilitado.`
+                          : worker.statusSummary || 'En espera de validación documental final para habilitar ingreso.'}
+                      </p>
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                        <span>Horas completadas</span>
+                        <strong className="text-slate-800">
+                          {dashboard.totalCompletedHours.toFixed(1)} / {dashboard.totalRequiredHours.toFixed(1)} h
+                        </strong>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </section>
@@ -460,7 +547,7 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
               </div>
 
               {dashboard.stage1Courses.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-500">
+                <div className="bg-white rounded-xl border border-slate-200 p-6 text-sm text-slate-500">
                   No hay cursos generales configurados actualmente.
                 </div>
               ) : (
@@ -488,7 +575,7 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
               </div>
 
               {dashboard.stage2Courses.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-500">
+                <div className="bg-white rounded-xl border border-slate-200 p-6 text-sm text-slate-500">
                   No hay cursos específicos adicionales requeridos para {worker.areaLabel}.
                 </div>
               ) : (
@@ -500,54 +587,32 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
 
             {/* Constancia descargable discreta cuando el certificado existe */}
             {dashboard.certificate && (
-              <div className="bg-white rounded-2xl border border-emerald-200 p-5 flex flex-wrap items-center justify-between gap-4">
+              <div className="bg-white rounded-xl border border-emerald-200 p-5 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
                     <Award className="w-5 h-5" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">Constancia de Capacitación Disponible</p>
+                    <p className="text-sm font-bold text-slate-900">
+                      Constancia de Capacitación Disponible
+                    </p>
                     <p className="text-xs text-slate-500">
                       Código: {dashboard.certificate.verificationCode}
                     </p>
                   </div>
                 </div>
-                <button
+                <LoadingButton
                   type="button"
-                  onClick={() =>
-                    downloadOfficialCertificatePdf({
-                      workerName: worker.fullName,
-                      workerDni: worker.dni,
-                      jobPosition: worker.jobPosition,
-                      contractorName: worker.contractorName,
-                      areaLabel: worker.areaLabel,
-                      verificationCode: dashboard.certificate!.verificationCode,
-                      issuedAt: dashboard.certificate!.issuedAt,
-                      issuedBy: dashboard.certificate!.issuedBy,
-                      totalHours: dashboard.totalCompletedHours,
-                      virtualHours: dashboard.daySummary
-                        .filter((d) => d.modality === 'VIRTUAL')
-                        .reduce((acc, d) => acc + d.completedHours, 0),
-                      presentialHours: dashboard.daySummary
-                        .filter((d) => d.modality === 'PRESENCIAL')
-                        .reduce((acc, d) => acc + d.completedHours, 0),
-                      averageScore: dashboard.certificate!.averageScore ?? null,
-                      dayBreakdown: dashboard.daySummary
-                        .filter((d) => d.requiredHours > 0)
-                        .map((d) => ({
-                          dayNumber: d.dayNumber,
-                          title: d.title,
-                          modality: d.modality,
-                          hours: d.requiredHours,
-                          status: d.allCompleted ? 'COMPLETADO' : 'PENDIENTE',
-                        })),
-                    })
-                  }
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-2 cursor-pointer"
+                  variant="primary"
+                  isLoading={submittingAction === 'pdf'}
+                  loadingText="Generando PDF..."
+                  isSuccess={successAction === 'pdf'}
+                  successText="Descargado"
+                  icon={<Download className="w-4 h-4" />}
+                  onClick={handleDownloadCertificate}
                 >
-                  <Download className="w-4 h-4" />
                   Descargar Constancia PDF
-                </button>
+                </LoadingButton>
               </div>
             )}
           </>
@@ -556,8 +621,8 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
 
       {/* MODAL ENFOCADO PARA CURSAR UN MÓDULO E-LEARNING */}
       {activeCourse && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden bateas-fade-in">
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
               <div>
                 <h3 className="text-base font-bold text-slate-900">{activeCourse.course.title}</h3>
@@ -569,14 +634,26 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveCourse(null)}
-                className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 cursor-pointer"
+                className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 transition cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6">
-              {/* Recursos del curso */}
+              {submittingAction === 'exam' && (
+                <SmartProcessLoader
+                  active
+                  mode="default"
+                  title="Calificando evaluación"
+                  customMessages={[
+                    'Verificando respuestas...',
+                    'Calculando puntaje obtenido...',
+                    'Actualizando tu estado de habilitación...',
+                  ]}
+                />
+              )}
+
               {activeCourse.course.resources.length > 0 && (
                 <div className="space-y-3">
                   <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -607,7 +684,7 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                             href={r.contentUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:underline"
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:underline"
                           >
                             <Download className="w-3.5 h-3.5" />
                             Abrir material ({r.fileName || r.type})
@@ -619,7 +696,6 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                 </div>
               )}
 
-              {/* Control de progreso */}
               <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 rounded-xl p-4 border border-slate-200">
                 <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
                   <input
@@ -627,23 +703,25 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                     checked={demoFastMode}
                     onChange={(e) => setDemoFastMode(e.target.checked)}
                   />
-                  <FastForward className="w-3.5 h-3.5 text-amber-500" />
+                  <FastForward className="w-3.5 h-3.5 text-amber-600" />
                   Modo Demo Acelerado
                 </label>
 
-                <button
+                <LoadingButton
                   type="button"
-                  disabled={submitting}
+                  variant="secondary"
+                  isLoading={submittingAction === 'watch'}
+                  loadingText="Registrando avance..."
+                  isSuccess={successAction === 'watch'}
+                  successText="Avance guardado"
                   onClick={handleRecordWatch}
-                  className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
                 >
                   {activeCourse.progressPercent >= 100
                     ? 'Contenido revisado (100%)'
                     : 'Marcar avance de estudio'}
-                </button>
+                </LoadingButton>
               </div>
 
-              {/* Evaluación del curso */}
               {activeCourse.course.questions.length > 0 && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
@@ -688,20 +766,24 @@ export const WorkerPortal: React.FC<WorkerPortalProps> = ({
                     ))}
                   </div>
 
-                  <button
+                  <LoadingButton
                     type="button"
-                    disabled={submitting}
+                    variant="primary"
+                    isLoading={submittingAction === 'exam'}
+                    loadingText="Enviando evaluación..."
+                    isSuccess={successAction === 'exam'}
+                    successText="Evaluación aprobada"
+                    icon={<UserCheck className="w-4 h-4" />}
                     onClick={handleSubmitExam}
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full py-2.5 text-sm rounded-xl"
                   >
-                    <UserCheck className="w-4 h-4" />
                     Enviar Evaluación
-                  </button>
+                  </LoadingButton>
                 </div>
               )}
 
               {courseFeedback && (
-                <div className="rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-3 text-xs font-semibold text-indigo-900">
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 text-xs font-semibold text-emerald-800 bateas-fade-in">
                   {courseFeedback}
                 </div>
               )}
