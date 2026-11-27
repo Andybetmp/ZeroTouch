@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import {
   Activity,
   AlertTriangle,
@@ -27,7 +26,6 @@ import {
   LogOut,
   Plus,
   Printer,
-  QrCode,
   RefreshCw,
   Search,
   Settings,
@@ -725,10 +723,40 @@ export default function App() {
     }
   };
 
+  const ACCESS_AREA_OPTIONS = [
+    { value: 'SOCAVON', label: 'Interior Mina / Socavón' },
+    { value: 'PLANTA_CONCENTRADORA', label: 'Planta Concentradora' },
+    { value: 'SUPERFICIE', label: 'Superficie / Talleres' },
+    { value: 'OFICINAS_ADMINISTRATIVAS', label: 'Oficinas Administrativas' },
+  ];
+
+  const getAreaLabel = (zone?: string) =>
+    ACCESS_AREA_OPTIONS.find((a) => a.value === zone)?.label || zone || 'Superficie / Talleres';
+
+  const handleChangeWorkerArea = async (workerId: string, newArea: string) => {
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/workers/${workerId}/area`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accessZone: newArea }),
+      });
+      await fetchAllData(workerId);
+      showNotice(
+        'success',
+        `Área de ingreso actualizada a ${res.data.areaLabel}. Cursos obligatorios asignados automáticamente.`
+      );
+    } catch (err: any) {
+      showNotice('error', err.message || 'No se pudo actualizar el área de ingreso.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleVerifyGaritaQr = async (codeToVerify?: string) => {
     const code = (codeToVerify ?? garitaVerifyCode).trim();
     if (!code) {
-      showNotice('error', 'Ingresa un Código de Carné QR o DNI de 8 dígitos para verificar en garita.');
+      showNotice('error', 'Ingresa un DNI de 8 dígitos para consultar el estado de habilitación.');
       return;
     }
     if (codeToVerify) setGaritaVerifyCode(codeToVerify);
@@ -992,7 +1020,7 @@ export default function App() {
                       : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  🚧 Garita QR
+                  🚧 Control de Acceso
                   <span className="block text-[10px] text-slate-400 font-normal">garita@bateas.pe</span>
                 </button>
                 <button
@@ -1175,8 +1203,8 @@ export default function App() {
             }`}
           >
             <span className="flex items-center gap-2.5">
-              <QrCode className="w-4 h-4 text-sky-400" />
-              <span>Control de accesos / QR</span>
+              <ShieldCheck className="w-4 h-4 text-sky-400" />
+              <span>Estado de Habilitación</span>
             </span>
             {metrics?.greenCount > 0 && (
               <span className="text-[10px] bg-sky-500/20 text-sky-300 px-1.5 rounded">{metrics.greenCount}</span>
@@ -1361,7 +1389,7 @@ export default function App() {
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                🚧 Garita / Carné QR
+                🚧 Control de Acceso
               </button>
             </div>
 
@@ -1403,7 +1431,7 @@ export default function App() {
               onClick={() => handleCreateDemoScenario('ZERO_TOUCH_GREEN')}
               className="px-2.5 py-1.5 rounded text-[11px] font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition cursor-pointer disabled:opacity-50"
             >
-              🟢 100% Zero-Touch (Verde + QR)
+              🟢 100% Zero-Touch (Habilitado)
             </button>
             <button
               disabled={loading}
@@ -1576,24 +1604,23 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Tarjeta 4: Reservas de Viaje y Carné Digital QR (Borde Azul como en Fig. 2) */}
+                    {/* Tarjeta 4: Estado de Habilitación por DNI */}
                     <div className="rounded border-2 border-sky-600 bg-white shadow-sm flex flex-col justify-between overflow-hidden">
                       <div>
                         <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
-                          <h3 className="font-bold text-xs text-slate-800">Reservas de viaje / Carné QR</h3>
+                          <h3 className="font-bold text-xs text-slate-800">Estado de Habilitación</h3>
                           <span className="text-[10px] font-bold bg-sky-100 text-sky-800 px-1.5 py-0.5 rounded">
-                            GARITA PVC
+                            CONTROL DNI
                           </span>
                         </div>
                         <div className="h-32 bg-gradient-to-br from-sky-50 to-cyan-100 flex items-center justify-center relative border-b border-slate-100">
-                          <QrCode className="w-14 h-14 text-sky-700" />
+                          <ShieldCheck className="w-14 h-14 text-sky-700" />
                           <span className="absolute bottom-2 right-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded">
-                            Semáforo Verde
+                            Habilitado / Pendiente
                           </span>
                         </div>
                         <p className="p-4 text-xs text-slate-600 leading-relaxed">
-                          Verifique el estado de su habilitación; guarde su Carné Digital (código QR) y valide la orden
-                          de impresión del Fotocheck físico en PVC en garita.
+                          Consulta el Estado de Habilitación asociado al DNI y Área de Ingreso del trabajador para validar su acceso a unidad minera.
                         </p>
                       </div>
                       <div className="px-4 pb-4">
@@ -1781,7 +1808,7 @@ export default function App() {
                                   <div className="flex items-center gap-2">
                                     <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block" />
                                     <span>
-                                      <strong>{metrics.greenCount} expediente(s) en VERDE</strong> (Carné QR emitido)
+                                      <strong>{metrics.greenCount} expediente(s) en VERDE</strong> (Habilitado)
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -1926,26 +1953,47 @@ export default function App() {
                             <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-300">
                               Puesto: {selectedWorker.jobPosition}
                             </span>
-                            <span className="text-xs font-bold bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-300">
-                              Zona: {selectedWorker.accessZone}
+                            <span className="text-xs font-bold bg-indigo-50 text-indigo-800 px-2.5 py-1 rounded border border-indigo-200 inline-flex items-center gap-1.5">
+                              Área de ingreso:
+                              {(authUser.strictRole === 'SSOMA' || authUser.strictRole === 'ECM') ? (
+                                <select
+                                  value={selectedWorker.accessZone}
+                                  onChange={(e) => handleChangeWorkerArea(selectedWorker.id, e.target.value)}
+                                  className="bg-white border border-indigo-300 rounded px-1.5 py-0.5 text-xs font-bold text-indigo-900 cursor-pointer"
+                                  title="Cambiar Área de Ingreso (asigna cursos automáticamente)"
+                                >
+                                  {ACCESS_AREA_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <strong>{getAreaLabel(selectedWorker.accessZone)}</strong>
+                              )}
                             </span>
                           </div>
                           <h2 className="text-lg font-black text-slate-900 pt-1">{selectedWorker.fullName}</h2>
                           <p className="text-xs text-slate-600">
-                            Empresa Contratista (ECM): <strong>{selectedWorker.contractor.companyName}</strong> · Código
-                            Sesión E-Learning: <strong className="text-indigo-700">{selectedWorker.sessionCode}</strong>
+                            Empresa Contratista (ECM): <strong>{selectedWorker.contractor.companyName}</strong> · Estado:{' '}
+                            <strong className={selectedWorker.trafficLight === 'VERDE' ? 'text-emerald-700' : 'text-amber-700'}>
+                              {selectedWorker.trafficLight === 'VERDE' ? 'Habilitado' : 'Pendiente'}
+                            </strong>
                           </p>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
-                          {selectedWorker.digitalBadge && (
-                            <button
-                              onClick={() => setActiveNav('ACCESOS_CARNET_QR')}
-                              className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer"
-                            >
-                              <QrCode className="w-4 h-4" /> Ver Carné QR ({selectedWorker.digitalBadge.badgeCode})
-                            </button>
-                          )}
+                          <button
+                            onClick={() => setActiveNav('ACCESOS_CARNET_QR')}
+                            className={`px-3.5 py-2 text-white text-xs font-bold rounded shadow-2xs flex items-center gap-1.5 cursor-pointer ${
+                              selectedWorker.trafficLight === 'VERDE'
+                                ? 'bg-emerald-600 hover:bg-emerald-500'
+                                : 'bg-slate-700 hover:bg-slate-600'
+                            }`}
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                            Estado: {selectedWorker.trafficLight === 'VERDE' ? 'Habilitado' : 'Pendiente'}
+                          </button>
                           {!selectedWorker.isBlacklisted && (
                             <button
                               onClick={() => setActiveNav('AFILIACION_ELEARNING')}
@@ -3031,23 +3079,22 @@ export default function App() {
           )}
 
           {/* ----------------------------------------------------------------------
-              VISTA 7: CONTROL DE ACCESOS -> CARNÉ DIGITAL QR Y FOTOCHECK PVC GARITA
+              VISTA 7: ESTADO DE HABILITACIÓN POR DNI Y ÁREA DE INGRESO (SIN QR)
           ---------------------------------------------------------------------- */}
           {activeNav === 'ACCESOS_CARNET_QR' && (
-            <div className="space-y-5">
-              {/* ESCÁNER Y VERIFICADOR CRIPTOGRÁFICO EN GARITA DE SEGURIDAD (Fase 4 - Spec 04 y 05) */}
-              <div className="bg-white p-5 rounded border border-slate-200 shadow-2xs space-y-4">
+            <div className="space-y-6">
+              {/* Consulta rápida por DNI */}
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <span className="text-[11px] font-black uppercase text-sky-700">
-                      Control de Garita · Verificación Criptográfica HMAC-SHA256 en Tiempo Real
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+                      Control de Accesos · Consulta Directa por DNI
                     </span>
-                    <h2 className="text-base font-bold text-slate-900">
-                      Escáner / Validador de Carné Digital QR y Estado de Fotocheck PVC
+                    <h2 className="text-lg font-bold text-slate-900 mt-0.5">
+                      Estado de Habilitación de Personal
                     </h2>
-                    <p className="text-xs text-slate-500">
-                      Ingrese el código del Carné QR (o el DNI de 8 dígitos del trabajador) o pulse &ldquo;Verificar en
-                      Garita&rdquo; en cualquiera de las tarjetas inferiores para comprobar su autenticidad.
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Verifica si un trabajador está Habilitado o Pendiente según su DNI y el Área de Ingreso asignada.
                     </p>
                   </div>
 
@@ -3056,111 +3103,114 @@ export default function App() {
                       type="text"
                       value={garitaVerifyCode}
                       onChange={(e) => setGaritaVerifyCode(e.target.value)}
-                      placeholder="Código QR (BZT-...) o DNI..."
-                      className="w-64 border border-slate-300 rounded px-3 py-2 text-xs font-bold"
+                      onKeyDown={(e) => e.key === 'Enter' && handleVerifyGaritaQr()}
+                      placeholder="Ingresa DNI de 8 dígitos..."
+                      className="w-60 border border-slate-300 rounded-xl px-3.5 py-2 text-xs font-semibold"
                     />
                     <button
                       onClick={() => handleVerifyGaritaQr()}
                       disabled={loading}
-                      className="px-4 py-2 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded shadow-2xs cursor-pointer"
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
                     >
-                      🔍 Verificar Acceso en Garita
+                      Consultar DNI
                     </button>
                   </div>
                 </div>
 
                 {garitaVerifyResult && (
                   <div
-                    className={`p-4 rounded-lg border-2 text-xs space-y-1.5 ${
+                    className={`p-4 rounded-xl border text-xs space-y-1.5 ${
                       garitaVerifyResult.accessGranted
-                        ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
-                        : 'bg-rose-50 border-rose-400 text-rose-950'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                        : 'bg-amber-50 border-amber-200 text-amber-950'
                     }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-black text-sm">
-                        {garitaVerifyResult.accessGranted
-                          ? '✅ PASE AUTORIZADO EN GARITA DE CONTROL'
-                          : '⛔ PASE DENEGADO / BLOQUEADO EN GARITA'}
+                      <span className="font-bold text-sm flex items-center gap-2">
+                        {garitaVerifyResult.accessGranted ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-amber-600" />
+                        )}
+                        Estado: {garitaVerifyResult.accessGranted ? 'HABILITADO' : 'PENDIENTE / NO HABILITADO'}
                       </span>
-                      <span className="font-mono text-[11px] bg-white/80 px-2 py-0.5 rounded border border-slate-300">
-                        Firma HMAC-SHA256: {garitaVerifyResult.signatureValid ? 'VÁLIDA' : 'NO VÁLIDA'}
-                      </span>
+                      {garitaVerifyResult.worker && (
+                        <span className="text-xs font-semibold bg-white px-2.5 py-1 rounded-full border border-slate-200">
+                          DNI: {garitaVerifyResult.worker.dni} · {getAreaLabel(garitaVerifyResult.worker.accessZone)}
+                        </span>
+                      )}
                     </div>
-                    <p className="font-semibold">{garitaVerifyResult.reason}</p>
+                    <p className="text-slate-700">{garitaVerifyResult.reason}</p>
                   </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {workers
-                  .filter((w) => w.digitalBadge !== null)
-                  .map((w) => {
-                    const badge = w.digitalBadge!;
-                    return (
-                      <div
-                        key={badge.id}
-                        className="bg-white rounded-xl border-2 border-sky-600 shadow-sm overflow-hidden flex flex-col justify-between"
-                      >
-                        {/* Cabecera Estilo Tarjeta "Mi Fotocheck Digital" de App Bateas (Figura 2 Entregable 3) */}
-                        <div className="bg-[#1e3a5f] text-white px-4 py-3 flex items-center justify-between">
-                          <div>
-                            <span className="text-[10px] font-bold uppercase text-sky-300 block">
-                              Mi Fotocheck Digital · App Bateas
-                            </span>
-                            <h4 className="text-sm font-black">{w.fullName}</h4>
-                          </div>
-                          <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
-                        </div>
-
-                        <div className="p-5 flex flex-col items-center text-center space-y-3">
-                          <div className="p-3 bg-white border-2 border-slate-200 rounded-lg shadow-2xs">
-                            <QRCodeSVG value={badge.qrPayloadJson} size={150} level="M" />
-                          </div>
-                          <div className="space-y-0.5 text-xs">
-                            <p className="font-black text-slate-900">{badge.badgeCode}</p>
-                            <p className="text-slate-600 font-semibold">
-                              DNI: {w.dni} · {w.jobPosition}
-                            </p>
-                            <p className="text-[11px] text-slate-500">{w.contractor.companyName}</p>
-                            <p className="text-[11px] font-bold text-emerald-700 pt-1">
-                              Zona: {w.accessZone} · Vigencia Mínima: {String(badge.validUntil).split('T')[0]}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-                          <div className="text-xs">
-                            <span className="text-[10px] font-bold uppercase text-slate-500 block">
-                              Credencial Física PVC:
-                            </span>
-                            <span className="font-black text-slate-800">{badge.pvcPrintStatus}</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => handleVerifyGaritaQr(badge.badgeCode)}
-                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-bold rounded cursor-pointer"
-                              title="Simular escaneo de este QR en garita"
-                            >
-                              Escanear QR
-                            </button>
-                            {badge.pvcPrintStatus === 'QUEUED_GARITA' ? (
-                              <button
-                                onClick={() => handleUpdatePvcStatus(badge.id, 'PRINTED')}
-                                className="px-3 py-1.5 bg-[#007bff] hover:bg-blue-600 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer"
-                              >
-                                <Printer className="w-3.5 h-3.5" /> Imprimir PVC
-                              </button>
+              {/* Tarjetas simples de Estado de Habilitación por trabajador (sin QR) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {workers.map((w) => {
+                  const isEnabled = w.trafficLight === 'VERDE' && !w.isBlacklisted;
+                  return (
+                    <div
+                      key={w.id}
+                      className={`bg-white rounded-2xl border p-5 shadow-2xs flex flex-col justify-between gap-4 ${
+                        isEnabled ? 'border-emerald-200' : 'border-slate-200'
+                      }`}
+                    >
+                      <div className="space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                              isEnabled
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {isEnabled ? (
+                              <CheckCircle2 className="w-3.5 h-3.5" />
                             ) : (
-                              <span className="px-2.5 py-1 rounded bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center gap-1">
-                                <CheckCircle2 className="w-3.5 h-3.5" /> PVC Entregado
-                              </span>
+                              <Clock className="w-3.5 h-3.5" />
                             )}
+                            {isEnabled ? 'Habilitado' : 'Pendiente'}
+                          </span>
+                          <span className="text-xs font-semibold text-slate-500">DNI: {w.dni}</span>
+                        </div>
+
+                        <div>
+                          <h4 className="text-sm font-bold text-slate-900">{w.fullName}</h4>
+                          <p className="text-xs text-slate-500 mt-0.5">{w.contractor.companyName}</p>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-100 space-y-1 text-xs">
+                          <div className="flex justify-between text-slate-600">
+                            <span>Área de ingreso</span>
+                            <strong className="text-slate-900">{getAreaLabel(w.accessZone)}</strong>
+                          </div>
+                          <div className="flex justify-between text-slate-600">
+                            <span>Puesto</span>
+                            <strong className="text-slate-800">{w.jobPosition}</strong>
                           </div>
                         </div>
                       </div>
-                    );
-                  })}
+
+                      <div className="pt-2 flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => handleVerifyGaritaQr(w.dni)}
+                          className="flex-1 py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+                        >
+                          Verificar por DNI
+                        </button>
+                        {w.digitalBadge && w.digitalBadge.pvcPrintStatus === 'QUEUED_GARITA' && (
+                          <button
+                            onClick={() => handleUpdatePvcStatus(w.digitalBadge!.id, 'PRINTED')}
+                            className="py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Printer className="w-3.5 h-3.5" /> PVC
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -3242,6 +3292,22 @@ export default function App() {
                     <option value="VISITA_TECNICA">VISITA TÉCNICA</option>
                   </select>
                 </div>
+                <div className="md:col-span-2">
+                  <label className="block font-bold text-slate-700 mb-1">
+                    Área de Ingreso (asigna cursos obligatorios automáticamente)
+                  </label>
+                  <select
+                    value={regForm.accessZone}
+                    onChange={(e) => setRegForm({ ...regForm, accessZone: e.target.value })}
+                    className="w-full border border-indigo-300 bg-indigo-50/40 rounded px-3 py-2 font-semibold text-slate-800"
+                  >
+                    {ACCESS_AREA_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200">
                 <button
@@ -3297,7 +3363,7 @@ export default function App() {
               🟡 Analizar Excepciones
             </button>
             <button
-              onClick={() => handleAskCopilot('¿Quiénes están listos con Carné QR para ingresar a mina?')}
+              onClick={() => handleAskCopilot('¿Quiénes están habilitados para ingresar a mina según su DNI y área?')}
               className="text-[10px] bg-white hover:bg-indigo-100 text-indigo-800 border border-indigo-200 px-2 py-1 rounded font-semibold cursor-pointer"
             >
               🟢 Habilitados QR

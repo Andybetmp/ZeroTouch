@@ -10,6 +10,7 @@ import {
 import { analyzeDocumentWithGeminiAi } from './ai.service.js';
 import { evaluateDocumentRules } from './rules.service.js';
 import { recalculateWorkerTrafficLight } from './trafficLight.service.js';
+import { syncWorkerCoursesByArea } from './courseCms.service.js';
 
 export interface RegisterWorkerInput {
   dni: string;
@@ -110,6 +111,9 @@ export async function registerWorkerWorkflow(input: RegisterWorkerInput) {
       },
     },
   });
+
+  // 5. Asignación automática de cursos obligatorios según el Área de Ingreso seleccionada
+  await syncWorkerCoursesByArea(worker.id);
 
   return recalculateWorkerTrafficLight(worker.id);
 }
@@ -527,6 +531,9 @@ export async function createDemoScenarioWorkflow(
       totalQuestions: 4,
     });
   }
+
+  // 5. Asignación automática de cursos obligatorios según el Área de Ingreso seleccionada
+  await syncWorkerCoursesByArea(worker.id);
 
   return recalculateWorkerTrafficLight(worker.id);
 }

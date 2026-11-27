@@ -405,19 +405,28 @@ async function main() {
     });
   }
 
-  // 7. CMS DE CAPACITACIONES (4 Días D.S. 024-2016-EM) + ASIGNACIONES + PERFIL CV ESTRUCTURADO
-  console.log('🎓 Sembrando CMS de Capacitaciones 4 Días, Asignaciones y Perfil CV...');
+  // 7. CMS DE CAPACITACIONES POR ÁREA DE INGRESO (ETAPA 1 GENERAL + ETAPA 2 ESPECÍFICA POR ÁREA)
+  console.log('🎓 Sembrando Malla de Capacitaciones por Área de Ingreso y Perfil CV...');
+
+  // Desactivar cursos genéricos antiguos que no pertenecen a la malla limpia por áreas
+  await prisma.trainingCourse.updateMany({
+    where: { code: { in: ['DS-024-2016-EM', 'CMS-D2-TECNICO', 'CMS-D3-PRACTICA', 'CMS-D4-SIMULACION'] } },
+    data: { isActive: false },
+  });
+
   const cmsCoursesSeed = [
+    // ETAPA 1: INDUCCIÓN GENERAL (targetArea: null — Obligatorio para todas las áreas)
     {
       code: 'CMS-D1-INDUCCION',
       title: 'Inducción General Minera Bateas y RIT',
-      description: 'Política Integrada SSO, Derecho a Decir NO, Reglamento Interno de Trabajo y estándares de convivencia en campamento.',
+      description: 'Política Integrada SSO, Derecho a Decir NO, Reglamento Interno de Trabajo y estándares de convivencia.',
       dayNumber: 1,
       modality: 'VIRTUAL' as const,
       durationHours: 4.5,
       minPassScore: 75,
       maxAttempts: 3,
       jobSpecialty: null,
+      targetArea: null,
       orderIndex: 1,
       resources: [
         {
@@ -458,13 +467,14 @@ async function main() {
     {
       code: 'CMS-D1-AMBIENTE',
       title: 'Gestión Ambiental y Segregación de Residuos NTP',
-      description: 'Código de colores para residuos sólidos mineros, control de derrames y cuidado hídrico en unidad Caylloma.',
+      description: 'Código de colores para residuos sólidos mineros, control de derrames y cuidado hídrico.',
       dayNumber: 1,
       modality: 'VIRTUAL' as const,
       durationHours: 3.5,
       minPassScore: 75,
       maxAttempts: 3,
       jobSpecialty: null,
+      targetArea: null,
       orderIndex: 2,
       resources: [
         {
@@ -485,32 +495,27 @@ async function main() {
         },
       ],
     },
+
+    // ETAPA 2: INTERIOR MINA / SOCAVÓN
     {
-      code: 'CMS-D2-TECNICO',
-      title: 'IPERC Continuo, LOTO y Control de Rocas en Socavón',
-      description: 'Capacitación técnica específica por puesto: desate de rocas, ventilación, bloqueo de energías peligrosas y MATPEL.',
+      code: 'CMS-AREA-SOC-1',
+      title: 'Desate de Rocas, Ventilación y Gases en Socavón',
+      description: 'Procedimientos PETS para labores subterráneas, monitoreo de O2/CO y control de techo.',
       dayNumber: 2,
       modality: 'VIRTUAL' as const,
-      durationHours: 8.0,
+      durationHours: 4.0,
       minPassScore: 75,
       maxAttempts: 3,
       jobSpecialty: null,
+      targetArea: 'SOCAVON' as const,
       orderIndex: 1,
       resources: [
         {
           type: 'VIDEO' as const,
-          title: 'Procedimiento PETS: Desate de Rocas y Monitoreo de Gases',
+          title: 'PETS Subterráneo: Desate de Rocas y Monitoreo de Gases',
           fileUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-          durationMinutes: 60,
+          durationMinutes: 50,
           orderIndex: 1,
-        },
-        {
-          type: 'PDF' as const,
-          title: 'Guía Técnica LOTO y Tabla de Límites Máximos Permisibles de Gases',
-          fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          fileName: 'Guia_LOTO_Gases_Socavon.pdf',
-          durationMinutes: 40,
-          orderIndex: 2,
         },
       ],
       questions: [
@@ -520,6 +525,47 @@ async function main() {
           correctIndex: 1,
           points: 2,
         },
+      ],
+    },
+    {
+      code: 'CMS-AREA-SOC-2',
+      title: 'Práctica de Rescate y Refugios Subterráneos',
+      description: 'Entrenamiento práctico en campo con autorrescatador, refugios mineros y evacuación en socavón.',
+      dayNumber: 3,
+      modality: 'PRESENCIAL' as const,
+      durationHours: 4.0,
+      minPassScore: 70,
+      maxAttempts: 2,
+      jobSpecialty: null,
+      targetArea: 'SOCAVON' as const,
+      orderIndex: 2,
+      resources: [],
+      questions: [],
+    },
+
+    // ETAPA 2: SUPERFICIE / TALLERES
+    {
+      code: 'CMS-AREA-SUP-1',
+      title: 'IPERC Continuo, Manejo Defensivo y Bloqueo LOTO',
+      description: 'Control de riesgos críticos en superficie, tránsito de equipos pesados y aislamiento de energías.',
+      dayNumber: 2,
+      modality: 'VIRTUAL' as const,
+      durationHours: 4.0,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      targetArea: 'SUPERFICIE' as const,
+      orderIndex: 1,
+      resources: [
+        {
+          type: 'VIDEO' as const,
+          title: 'Estándar LOTO y Manejo Defensivo en Superficie',
+          fileUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+          durationMinutes: 45,
+          orderIndex: 1,
+        },
+      ],
+      questions: [
         {
           questionText: '¿En qué orden se ejecuta el bloqueo LOTO?',
           options: [
@@ -533,50 +579,104 @@ async function main() {
       ],
     },
     {
-      code: 'CMS-D3-PRACTICA',
-      title: 'Práctica Presencial de Campo: EPP, Rescate y Primeros Auxilios',
-      description: 'Entrenamiento presencial en estación práctica SSOMA: uso de autorrescatador, arnés, extintores y control de hemorragias.',
+      code: 'CMS-AREA-SUP-2',
+      title: 'Práctica de Campo: EPP y Control de Riesgos en Talleres',
+      description: 'Verificación presencial de uso de EPP, extintores y respuesta ante emergencias en superficie.',
       dayNumber: 3,
       modality: 'PRESENCIAL' as const,
-      durationHours: 8.0,
+      durationHours: 4.0,
       minPassScore: 70,
       maxAttempts: 2,
       jobSpecialty: null,
+      targetArea: 'SUPERFICIE' as const,
+      orderIndex: 2,
+      resources: [],
+      questions: [],
+    },
+
+    // ETAPA 2: PLANTA CONCENTRADORA
+    {
+      code: 'CMS-AREA-PLA-1',
+      title: 'Seguridad en Procesos Metalúrgicos y MATPEL',
+      description: 'Manipulación segura de reactivos químicos, hojas MSDS y control de derrames en planta.',
+      dayNumber: 2,
+      modality: 'VIRTUAL' as const,
+      durationHours: 4.0,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      targetArea: 'PLANTA_CONCENTRADORA' as const,
       orderIndex: 1,
       resources: [
         {
           type: 'PDF' as const,
-          title: 'Lista de Verificación Práctica Día 3 (SSOMA)',
+          title: 'Guía Técnica MATPEL y Reactivos de Planta',
           fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          fileName: 'Checklist_Practica_Dia3.pdf',
-          durationMinutes: 30,
+          fileName: 'Guia_MATPEL_Planta.pdf',
+          durationMinutes: 35,
           orderIndex: 1,
         },
       ],
-      questions: [],
+      questions: [
+        {
+          questionText: '¿Qué documento debe consultarse antes de manipular cualquier reactivo químico en planta?',
+          options: ['Hoja de Seguridad (MSDS / FDS)', 'Boleta de pago', 'Factura comercial'],
+          correctIndex: 0,
+          points: 2,
+        },
+      ],
     },
     {
-      code: 'CMS-D4-SIMULACION',
-      title: 'Simulación Presencial de Emergencias y Evaluación Final',
-      description: 'Simulacro integral de evacuación en socavón, respuesta ante amago de incendio y evaluación final en terreno.',
-      dayNumber: 4,
+      code: 'CMS-AREA-PLA-2',
+      title: 'Bloqueo LOTO en Equipos de Molienda y Flotación',
+      description: 'Práctica presencial de aislamiento de energía en fajas transportadoras, molinos y bombas.',
+      dayNumber: 3,
       modality: 'PRESENCIAL' as const,
-      durationHours: 8.0,
+      durationHours: 4.0,
       minPassScore: 70,
       maxAttempts: 2,
       jobSpecialty: null,
+      targetArea: 'PLANTA_CONCENTRADORA' as const,
+      orderIndex: 2,
+      resources: [],
+      questions: [],
+    },
+
+    // ETAPA 2: OFICINAS ADMINISTRATIVAS
+    {
+      code: 'CMS-AREA-OFI-1',
+      title: 'Ergonomía, Evacuación y Seguridad en Oficinas',
+      description: 'Prevención de riesgos disergonómicos, rutas de evacuación y seguridad eléctrica en sede administrativa.',
+      dayNumber: 2,
+      modality: 'VIRTUAL' as const,
+      durationHours: 2.0,
+      minPassScore: 75,
+      maxAttempts: 3,
+      jobSpecialty: null,
+      targetArea: 'OFICINAS_ADMINISTRATIVAS' as const,
       orderIndex: 1,
       resources: [
         {
           type: 'PRESENTATION' as const,
-          title: 'Protocolo de Emergencias Minera Bateas - Día 4',
+          title: 'Protocolo de Seguridad y Evacuación en Oficinas',
           fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-          fileName: 'Protocolo_Emergencias_Dia4.pdf',
-          durationMinutes: 30,
+          fileName: 'Seguridad_Oficinas.pdf',
+          durationMinutes: 20,
           orderIndex: 1,
         },
       ],
-      questions: [],
+      questions: [
+        {
+          questionText: '¿Qué se debe hacer ante una señal de evacuación por sismo en oficinas?',
+          options: [
+            'Usar el ascensor rápidamente',
+            'Mantener la calma y desplazarse ordenadamente hacia la zona segura señalizada',
+            'Permanecer bajo el escritorio todo el día',
+          ],
+          correctIndex: 1,
+          points: 2,
+        },
+      ],
     },
   ];
 
@@ -595,6 +695,7 @@ async function main() {
           minPassScore: c.minPassScore,
           maxAttempts: c.maxAttempts,
           jobSpecialty: c.jobSpecialty,
+          targetArea: c.targetArea,
           orderIndex: c.orderIndex,
           isActive: true,
           resources: {
@@ -612,32 +713,57 @@ async function main() {
       });
       createdCourses.push(created);
     } else {
-      createdCourses.push(existing);
+      const updated = await prisma.trainingCourse.update({
+        where: { id: existing.id },
+        data: { targetArea: c.targetArea, isActive: true, title: c.title, durationHours: c.durationHours },
+      });
+      createdCourses.push(updated);
     }
   }
 
-  // Asignar cursos a trabajador@bateas.pe (Día 1 completado, Día 2-4 pendientes para demo fluida)
-  if (amberWorker) {
-    for (const c of createdCourses) {
-      const isDay1 = c.dayNumber === 1;
+  // Sincronizar automáticamente todos los trabajadores según su Área de Ingreso
+  const allWorkersSeed = await prisma.worker.findMany({ select: { id: true, dni: true, accessZone: true } });
+  for (const w of allWorkersSeed) {
+    // Limpiar asignaciones pendientes de cursos inactivos o de otra área
+    await prisma.workerCourseAssignment.deleteMany({
+      where: {
+        workerId: w.id,
+        status: { not: 'COMPLETED' },
+        course: {
+          OR: [
+            { isActive: false },
+            { AND: [{ targetArea: { not: null } }, { targetArea: { not: w.accessZone } }] },
+          ],
+        },
+      },
+    });
+
+    const areaCourses = createdCourses.filter(
+      (c) => c.targetArea === null || c.targetArea === w.accessZone
+    );
+    for (const c of areaCourses) {
+      const isAmberStage1 = amberWorker && w.id === amberWorker.id && c.targetArea === null;
+      const isGreen = w.dni === '72458910' || w.dni === '71234561';
       await prisma.workerCourseAssignment.upsert({
-        where: { workerId_courseId: { workerId: amberWorker.id, courseId: c.id } },
+        where: { workerId_courseId: { workerId: w.id, courseId: c.id } },
         update: {},
         create: {
-          workerId: amberWorker.id,
+          workerId: w.id,
           courseId: c.id,
-          status: isDay1 ? 'COMPLETED' : 'PENDING',
-          progressPercent: isDay1 ? 100 : 0,
-          hoursCompleted: isDay1 ? c.durationHours : 0,
-          watchedSeconds: isDay1 ? Math.round(c.durationHours * 3600) : 0,
-          examScore: isDay1 ? 92 : null,
-          attemptsUsed: isDay1 ? 1 : 0,
-          notes: 'Asignado en semilla inicial',
-          completedAt: isDay1 ? new Date() : null,
+          status: isGreen || isAmberStage1 ? 'COMPLETED' : 'PENDING',
+          progressPercent: isGreen || isAmberStage1 ? 100 : 0,
+          hoursCompleted: isGreen || isAmberStage1 ? c.durationHours : 0,
+          watchedSeconds: isGreen || isAmberStage1 ? Math.round(c.durationHours * 3600) : 0,
+          examScore: isGreen || isAmberStage1 ? 92 : null,
+          attemptsUsed: isGreen || isAmberStage1 ? 1 : 0,
+          notes: `Asignado automáticamente según área ${w.accessZone}`,
+          completedAt: isGreen || isAmberStage1 ? new Date() : null,
         },
       });
     }
+  }
 
+  if (amberWorker) {
     await prisma.workerCvProfile.upsert({
       where: { workerId: amberWorker.id },
       update: {},
@@ -667,38 +793,17 @@ async function main() {
     });
   }
 
-  // Asignar y completar 4 días para el trabajador VERDE de demostración + emitir constancia
-  const greenWorkerCms = await prisma.worker.findUnique({ where: { dni: '71234561' } });
+  const greenWorkerCms = await prisma.worker.findUnique({ where: { dni: '72458910' } });
   if (greenWorkerCms) {
-    for (const c of createdCourses) {
-      await prisma.workerCourseAssignment.upsert({
-        where: { workerId_courseId: { workerId: greenWorkerCms.id, courseId: c.id } },
-        update: {},
-        create: {
-          workerId: greenWorkerCms.id,
-          courseId: c.id,
-          status: 'COMPLETED',
-          progressPercent: 100,
-          hoursCompleted: c.durationHours,
-          watchedSeconds: Math.round(c.durationHours * 3600),
-          examScore: c.modality === 'VIRTUAL' ? 95 : 92,
-          instructorName: c.modality === 'PRESENCIAL' ? 'ssoma@bateas.pe' : null,
-          attendanceDate: c.modality === 'PRESENCIAL' ? new Date().toISOString().slice(0, 10) : null,
-          attemptsUsed: 1,
-          completedAt: new Date(),
-        },
-      });
-    }
-
     const existingCert = await prisma.trainingCertificate.findFirst({ where: { workerId: greenWorkerCms.id } });
     if (!existingCert) {
       await prisma.trainingCertificate.create({
         data: {
           workerId: greenWorkerCms.id,
           certificateCode: 'BAT-CERT-2026-0001',
-          virtualHours: 16,
-          presentialHours: 16,
-          totalHours: 32,
+          virtualHours: 12,
+          presentialHours: 4,
+          totalHours: 16,
           averageScore: 93.8,
           issuedBy: 'ssoma@bateas.pe',
         },

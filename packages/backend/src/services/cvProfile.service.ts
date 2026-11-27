@@ -103,7 +103,8 @@ export async function uploadWorkerCvPdf(
   file: { originalname: string; mimetype: string; buffer: Buffer },
   updatedBy: string
 ) {
-  const dataUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+  const safeMime = file.mimetype || 'application/pdf';
+  const dataUrl = `data:${safeMime};base64,${file.buffer.toString('base64')}`;
 
   await prisma.workerCvProfile.upsert({
     where: { workerId },
@@ -193,7 +194,7 @@ export async function autofillCvFromPdf(workerId: string, updatedBy: string) {
     const cvDoc = await prisma.workerDocument.findFirst({
       where: {
         workerId,
-        requirement: { code: 'CV_ACTUALIZADO' },
+        requirement: { code: { in: ['CV_DOC', 'CV_ACTUALIZADO'] } },
       },
       orderBy: { id: 'desc' },
     });

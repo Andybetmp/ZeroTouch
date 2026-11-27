@@ -1,10 +1,24 @@
 import crypto from 'node:crypto';
-import { JobPosition } from '@prisma/client';
+import { AccessZone, JobPosition } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { recalculateWorkerTrafficLight } from './trafficLight.service.js';
 
 export type CourseModalityType = 'VIRTUAL' | 'PRESENCIAL';
 export type CourseResourceTypeValue = 'VIDEO' | 'PDF' | 'PRESENTATION' | 'QUIZ';
+
+export const ACCESS_AREA_LABELS: Record<AccessZone, string> = {
+  SOCAVON: 'Interior Mina / Socavón',
+  PLANTA_CONCENTRADORA: 'Planta Concentradora',
+  SUPERFICIE: 'Superficie / Talleres',
+  OFICINAS_ADMINISTRATIVAS: 'Oficinas Administrativas',
+};
+
+export const VALID_ACCESS_AREAS: AccessZone[] = [
+  'SOCAVON',
+  'PLANTA_CONCENTRADORA',
+  'SUPERFICIE',
+  'OFICINAS_ADMINISTRATIVAS',
+];
 
 export const DAY_SCHEDULE_METADATA: Record<
   number,
@@ -13,24 +27,110 @@ export const DAY_SCHEDULE_METADATA: Record<
   1: {
     title: 'Día 1 — Inducción General de la Empresa',
     defaultModality: 'VIRTUAL',
-    description: 'Políticas internas, cultura de seguridad, RIT y estándares de Minera Bateas (D.S. 024-2016-EM).',
+    description: 'Políticas internas, cultura de seguridad, RIT y estándares de Minera Bateas.',
   },
   2: {
     title: 'Día 2 — Conocimientos Técnicos y Seguridad',
     defaultModality: 'VIRTUAL',
-    description: 'IPERC, estándares operativos por puesto, MATPEL, LOTO y prevención de riesgos específicos.',
+    description: 'IPERC, estándares operativos por área, MATPEL, LOTO y prevención de riesgos específicos.',
   },
   3: {
     title: 'Día 3 — Capacitación Presencial y Actividades Prácticas',
     defaultModality: 'PRESENCIAL',
-    description: 'Prácticas en campo, uso de EPP, rescate minero, manejo defensivo y verificación presencial SSOMA.',
+    description: 'Prácticas en campo, uso de EPP, rescate minero y verificación presencial SSOMA.',
   },
   4: {
     title: 'Día 4 — Simulaciones Presenciales y Evaluación Final',
     defaultModality: 'PRESENCIAL',
-    description: 'Simulacros de emergencia, evaluación práctica en terreno y cierre de habilitación 4 jornadas.',
+    description: 'Simulacros de emergencia y evaluación práctica final.',
   },
 };
+
+export function getAreaLabel(area: AccessZone | null | undefined): string {
+  if (!area) return 'Inducción General (Todas las áreas)';
+  return ACCESS_AREA_LABELS[area] || area;
+}
+
+/**
+ * Sincroniza automáticamente los cursos obligatorios asignados a un trabajador
+ * según su Área de Ingreso (`worker.accessZone`):
+ * - Etapa 1: Cursos activos con `targetArea = null` (Inducción General base).
+ * - Etapa 2: Cursos activos con `targetArea = worker.accessZone` (Específicos del Área).
+ * Elimina asignaciones PENDING que correspondan a otra área si el trabajador cambió de destino.
+ */
+export async function syncWorkerCoursesByArea(workerId: string) {
+  const worker = await prisma.worker.findUnique({
+    where: { id: workerId },
+    select: { id: true, accessZone: true },
+  });
+  if (!worker) return { assignedCount: 0, removedCount: 0 };
+
+  const requiredCourses = await prisma.trainingCourse.findMany({
+    where: {
+      isActive: true,
+      OR: [{ targetArea: null }, { targetArea: worker.accessZone }],
+    },
+    select: { id: true },
+  });
+
+  const requiredIds = new Set(requiredCourses.map((c) => c.id));
+
+  const existingAssignments = await prisma.workerCourseAssignment.findMany({
+    where: { workerId },
+    include: { course: { select: { id: true, targetArea: true, isActive: true } } },
+  });
+
+  let removedCount = 0;
+  for (const a of existingAssignments) {
+    const belongsToOtherArea =
+      a.course.targetArea !== null && a.course.targetArea !== worker.accessZone;
+    const isInactiveAndNotDone = !a.course.isActive && a.status !== 'COMPLETED';
+    if ((belongsToOtherArea && a.status !== 'COMPLETED') || isInactiveAndNotDone) {
+      await prisma.workerCourseAssignment.delete({ where: { id: a.id } });
+      removedCount += 1;
+    }
+  }
+
+  const existingIds = new Set(existingAssignments.map((a) => a.courseId));
+  let assignedCount = 0;
+  for (const courseId of requiredIds) {
+    if (!existingIds.has(courseId)) {
+      await prisma.workerCourseAssignment.create({
+        data: {
+          workerId,
+          courseId,
+          status: 'PENDING',
+          notes: `Asignado automáticamente por área: ${getAreaLabel(worker.accessZone)}`,
+        },
+      });
+      assignedCount += 1;
+    }
+  }
+
+  if (assignedCount > 0 || removedCount > 0) {
+    await recalculateWorkerTrafficLight(workerId);
+  }
+
+  return { assignedCount, removedCount };
+}
+
+/**
+ * Sincroniza cursos automáticamente para todos los trabajadores impactados por un área
+ * (o todos los trabajadores si `targetArea === null`).
+ */
+export async function syncWorkersForArea(targetArea: AccessZone | null) {
+  const workers = await prisma.worker.findMany({
+    where: targetArea ? { accessZone: targetArea } : {},
+    select: { id: true },
+  });
+
+  let totalAssigned = 0;
+  for (const w of workers) {
+    const res = await syncWorkerCoursesByArea(w.id);
+    totalAssigned += res.assignedCount;
+  }
+  return { workersSynced: workers.length, totalAssigned };
+}
 
 export async function listCmsCourses(includeInactive = true) {
   const courses = await prisma.trainingCourse.findMany({
@@ -40,7 +140,7 @@ export async function listCmsCourses(includeInactive = true) {
       questions: { orderBy: { id: 'asc' } },
       _count: { select: { assignments: true } },
     },
-    orderBy: [{ dayNumber: 'asc' }, { orderIndex: 'asc' }, { createdAt: 'asc' }],
+    orderBy: [{ targetArea: 'asc' }, { dayNumber: 'asc' }, { orderIndex: 'asc' }, { createdAt: 'asc' }],
   });
 
   const daySubtotals: Record<
@@ -53,6 +153,17 @@ export async function listCmsCourses(includeInactive = true) {
     4: { dayNumber: 4, title: DAY_SCHEDULE_METADATA[4].title, modality: 'PRESENCIAL', totalHours: 0, courseCount: 0 },
   };
 
+  const areaSummaryMap: Record<
+    string,
+    { areaKey: string; label: string; courseCount: number; totalHours: number }
+  > = {
+    GENERAL: { areaKey: 'GENERAL', label: 'Etapa 1 · Inducción General (Todas las áreas)', courseCount: 0, totalHours: 0 },
+    SOCAVON: { areaKey: 'SOCAVON', label: ACCESS_AREA_LABELS.SOCAVON, courseCount: 0, totalHours: 0 },
+    PLANTA_CONCENTRADORA: { areaKey: 'PLANTA_CONCENTRADORA', label: ACCESS_AREA_LABELS.PLANTA_CONCENTRADORA, courseCount: 0, totalHours: 0 },
+    SUPERFICIE: { areaKey: 'SUPERFICIE', label: ACCESS_AREA_LABELS.SUPERFICIE, courseCount: 0, totalHours: 0 },
+    OFICINAS_ADMINISTRATIVAS: { areaKey: 'OFICINAS_ADMINISTRATIVAS', label: ACCESS_AREA_LABELS.OFICINAS_ADMINISTRATIVAS, courseCount: 0, totalHours: 0 },
+  };
+
   let grandTotalHours = 0;
   for (const c of courses) {
     if (!c.isActive) continue;
@@ -60,11 +171,21 @@ export async function listCmsCourses(includeInactive = true) {
     daySubtotals[d].totalHours = Number((daySubtotals[d].totalHours + (c.durationHours || 0)).toFixed(2));
     daySubtotals[d].courseCount += 1;
     grandTotalHours = Number((grandTotalHours + (c.durationHours || 0)).toFixed(2));
+
+    const areaKey = c.targetArea || 'GENERAL';
+    if (areaSummaryMap[areaKey]) {
+      areaSummaryMap[areaKey].courseCount += 1;
+      areaSummaryMap[areaKey].totalHours = Number(
+        (areaSummaryMap[areaKey].totalHours + (c.durationHours || 0)).toFixed(2)
+      );
+    }
   }
 
   return {
     courses: courses.map((c) => ({
       ...c,
+      targetAreaLabel: getAreaLabel(c.targetArea),
+      stageLabel: c.targetArea ? 'Etapa 2: Capacitación Específica del Área' : 'Etapa 1: Inducción General',
       resources: c.resources.map((r) => ({
         ...r,
         contentUrl: r.fileUrl,
@@ -75,6 +196,7 @@ export async function listCmsCourses(includeInactive = true) {
       })),
     })),
     daySubtotals: Object.values(daySubtotals),
+    areaSummary: Object.values(areaSummaryMap),
     grandTotalHours,
   };
 }
@@ -83,23 +205,31 @@ export async function createCmsCourse(input: {
   code?: string;
   title: string;
   description?: string;
-  dayNumber: number;
+  dayNumber?: number;
   modality?: CourseModalityType;
   durationHours: number;
   minPassScore?: number;
   maxAttempts?: number;
   jobSpecialty?: string | null;
+  targetArea?: AccessZone | '' | null;
   orderIndex?: number;
   isActive?: boolean;
 }) {
-  const dayNumber = Math.min(4, Math.max(1, Number(input.dayNumber) || 1));
+  const targetArea =
+    input.targetArea && VALID_ACCESS_AREAS.includes(input.targetArea as AccessZone)
+      ? (input.targetArea as AccessZone)
+      : null;
+  const dayNumber = Math.min(
+    4,
+    Math.max(1, Number(input.dayNumber) || (targetArea ? 2 : 1))
+  );
   const modality: CourseModalityType =
     input.modality ?? (dayNumber <= 2 ? 'VIRTUAL' : 'PRESENCIAL');
   const code =
     input.code?.trim() ||
-    `CURSO-D${dayNumber}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    `CURSO-${targetArea ? targetArea.slice(0, 3) : 'GEN'}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
 
-  return prisma.trainingCourse.create({
+  const created = await prisma.trainingCourse.create({
     data: {
       code,
       title: input.title.trim(),
@@ -110,11 +240,18 @@ export async function createCmsCourse(input: {
       minPassScore: Math.min(100, Math.max(1, Number(input.minPassScore) || 75)),
       maxAttempts: Math.max(1, Number(input.maxAttempts) || 3),
       jobSpecialty: input.jobSpecialty?.trim() ? (input.jobSpecialty.trim() as JobPosition) : null,
+      targetArea,
       orderIndex: Number(input.orderIndex) || 1,
       isActive: input.isActive ?? true,
     },
     include: { resources: true, questions: true },
   });
+
+  if (created.isActive) {
+    await syncWorkersForArea(created.targetArea);
+  }
+
+  return created;
 }
 
 export async function updateCmsCourse(
@@ -128,6 +265,7 @@ export async function updateCmsCourse(
     minPassScore: number;
     maxAttempts: number;
     jobSpecialty: string | null;
+    targetArea: AccessZone | '' | null;
     orderIndex: number;
     isActive: boolean;
   }>
@@ -143,14 +281,25 @@ export async function updateCmsCourse(
   if (input.jobSpecialty !== undefined) {
     data.jobSpecialty = input.jobSpecialty?.trim() ? (input.jobSpecialty.trim() as JobPosition) : null;
   }
+  if (input.targetArea !== undefined) {
+    data.targetArea =
+      input.targetArea && VALID_ACCESS_AREAS.includes(input.targetArea as AccessZone)
+        ? (input.targetArea as AccessZone)
+        : null;
+  }
   if (input.orderIndex !== undefined) data.orderIndex = Number(input.orderIndex);
   if (input.isActive !== undefined) data.isActive = Boolean(input.isActive);
 
-  return prisma.trainingCourse.update({
+  const updated = await prisma.trainingCourse.update({
     where: { id: courseId },
     data,
     include: { resources: { orderBy: { orderIndex: 'asc' } }, questions: true },
   });
+
+  // Sincronizar asignaciones automáticas en trabajadores afectados
+  await syncWorkersForArea(null);
+
+  return updated;
 }
 
 export async function deleteCmsCourse(courseId: string) {
@@ -258,8 +407,19 @@ export async function assignCoursesToWorkers(input: {
 }
 
 export async function getWorkerCourseDashboard(workerId: string) {
+  // Asegurar asignación 100% automática según el área de ingreso del trabajador
+  await syncWorkerCoursesByArea(workerId);
+
+  const worker = await prisma.worker.findUnique({
+    where: { id: workerId },
+    include: { contractor: true },
+  });
+
   const assignments = await prisma.workerCourseAssignment.findMany({
-    where: { workerId },
+    where: {
+      workerId,
+      course: { isActive: true },
+    },
     include: {
       course: {
         include: {
@@ -268,7 +428,7 @@ export async function getWorkerCourseDashboard(workerId: string) {
         },
       },
     },
-    orderBy: [{ course: { dayNumber: 'asc' } }, { course: { orderIndex: 'asc' } }],
+    orderBy: [{ course: { targetArea: 'asc' } }, { course: { dayNumber: 'asc' } }, { course: { orderIndex: 'asc' } }],
   });
 
   const daySummary = [1, 2, 3, 4].map((day) => {
@@ -297,43 +457,52 @@ export async function getWorkerCourseDashboard(workerId: string) {
     };
   });
 
-  const dayUnlocked: Record<number, boolean> = { 1: true, 2: false, 3: false, 4: false };
-  for (let d = 2; d <= 4; d++) {
-    const prev = daySummary[d - 2];
-    dayUnlocked[d] = dayUnlocked[d - 1] && (prev.totalCourses === 0 || prev.allCompleted);
-  }
+  // Etapa 1 (Inducción General: targetArea === null) siempre desbloqueada.
+  // Etapa 2 (Específica del Área: targetArea !== null) se desbloquea al completar Etapa 1 (o si Etapa 1 está vacía).
+  const stage1Raw = assignments.filter((a) => a.course.targetArea === null);
+  const stage1Completed = stage1Raw.length === 0 || stage1Raw.every((a) => a.status === 'COMPLETED');
 
-  const enriched = assignments.map((a) => ({
-    ...a,
-    isDayUnlocked: dayUnlocked[a.course.dayNumber] ?? true,
-    course: {
-      ...a.course,
-      resources: a.course.resources.map((r) => ({
-        ...r,
-        contentUrl: r.fileUrl,
-      })),
-      questions: a.course.questions.map((q) => ({
-        id: q.id,
-        prompt: q.questionText,
-        options: JSON.parse(q.optionsJson) as string[],
-        points: q.points,
-      })),
-    },
-  }));
+  const enriched = assignments.map((a) => {
+    const isStage1 = a.course.targetArea === null;
+    const isUnlocked = isStage1 ? true : stage1Completed;
+    return {
+      ...a,
+      stage: isStage1 ? 1 : 2,
+      isDayUnlocked: isUnlocked,
+      course: {
+        ...a.course,
+        targetAreaLabel: getAreaLabel(a.course.targetArea),
+        resources: a.course.resources.map((r) => ({
+          ...r,
+          contentUrl: r.fileUrl,
+        })),
+        questions: a.course.questions.map((q) => ({
+          id: q.id,
+          prompt: q.questionText,
+          options: JSON.parse(q.optionsJson) as string[],
+          points: q.points,
+        })),
+      },
+    };
+  });
 
+  const stage1Courses = enriched.filter((a) => a.stage === 1);
+  const stage2Courses = enriched.filter((a) => a.stage === 2);
   const pendingCourses = enriched.filter((a) => a.status !== 'COMPLETED');
   const completedCourses = enriched.filter((a) => a.status === 'COMPLETED');
 
+  const totalCount = enriched.length;
+  const completedCount = completedCourses.length;
   const totalRequiredHours = Number(
-    daySummary.reduce((acc, d) => acc + d.requiredHours, 0).toFixed(2)
+    enriched.reduce((acc, a) => acc + (a.course.durationHours || 0), 0).toFixed(2)
   );
   const totalCompletedHours = Number(
-    daySummary.reduce((acc, d) => acc + d.completedHours, 0).toFixed(2)
+    enriched
+      .reduce((acc, a) => acc + (a.status === 'COMPLETED' ? a.course.durationHours : a.hoursCompleted), 0)
+      .toFixed(2)
   );
   const overallProgressPercent =
-    totalRequiredHours > 0
-      ? Math.min(100, Math.round((totalCompletedHours / totalRequiredHours) * 100))
-      : 0;
+    totalCount > 0 ? Math.min(100, Math.round((completedCount / totalCount) * 100)) : 0;
 
   const cert = await prisma.trainingCertificate.findFirst({
     where: { workerId },
@@ -341,15 +510,34 @@ export async function getWorkerCourseDashboard(workerId: string) {
   });
 
   return {
+    workerInfo: worker
+      ? {
+          id: worker.id,
+          fullName: worker.fullName,
+          dni: worker.dni,
+          jobPosition: worker.jobPosition,
+          contractorName: worker.contractor.companyName,
+          accessZone: worker.accessZone,
+          areaLabel: getAreaLabel(worker.accessZone),
+          trafficLight: worker.trafficLight,
+          isBlacklisted: worker.isBlacklisted,
+          isEnabled: worker.trafficLight === 'VERDE' && !worker.isBlacklisted,
+          statusSummary: worker.statusSummary,
+        }
+      : null,
+    stage1Courses,
+    stage2Courses,
+    stage1Completed,
     pendingCourses,
     completedCourses,
+    completedCount,
+    totalCount,
     daySummary,
-    dayUnlocked,
+    dayUnlocked: { 1: true, 2: stage1Completed, 3: stage1Completed, 4: stage1Completed },
     totalRequiredHours,
     totalCompletedHours,
     overallProgressPercent,
-    allFourDaysCompleted:
-      assignments.length > 0 && daySummary.every((d) => d.totalCourses === 0 || d.allCompleted),
+    allFourDaysCompleted: totalCount > 0 && completedCount === totalCount,
     certificate: cert
       ? {
           ...cert,
@@ -514,7 +702,7 @@ export async function recordCoursePresentialAttendance(input: {
 
 export async function issueTrainingCertificate(workerId: string, issuedBy: string) {
   const assignments = await prisma.workerCourseAssignment.findMany({
-    where: { workerId },
+    where: { workerId, course: { isActive: true } },
     include: { course: true },
   });
 
@@ -581,7 +769,7 @@ export async function getTrainingTrackingReport(filters?: {
     },
     include: {
       contractor: true,
-      courseAssignments: { include: { course: true } },
+      courseAssignments: { where: { course: { isActive: true } }, include: { course: true } },
       certificates: { orderBy: { issuedAt: 'desc' }, take: 1 },
     },
     orderBy: { fullName: 'asc' },
@@ -611,7 +799,7 @@ export async function getTrainingTrackingReport(filters?: {
         .toFixed(2)
     );
     const progressPercent =
-      requiredHours > 0 ? Math.min(100, Math.round((completedHours / requiredHours) * 100)) : 0;
+      totalCourses > 0 ? Math.min(100, Math.round((completedCourses / totalCourses) * 100)) : 0;
 
     const scores = w.courseAssignments
       .map((a) => a.examScore)
@@ -648,6 +836,8 @@ export async function getTrainingTrackingReport(filters?: {
       dni: w.dni,
       fullName: w.fullName,
       jobPosition: w.jobPosition,
+      accessZone: w.accessZone,
+      areaLabel: getAreaLabel(w.accessZone),
       contractorId: w.contractorId,
       contractorName: w.contractor.companyName,
       trafficLightStatus: w.trafficLight,
@@ -672,6 +862,8 @@ export async function getTrainingTrackingReport(filters?: {
         courseId: a.courseId,
         courseTitle: a.course.title,
         dayNumber: a.course.dayNumber,
+        targetArea: a.course.targetArea,
+        targetAreaLabel: getAreaLabel(a.course.targetArea),
         modality: a.course.modality,
         durationHours: a.course.durationHours,
         hoursCompleted: a.status === 'COMPLETED' ? a.course.durationHours : a.hoursCompleted,

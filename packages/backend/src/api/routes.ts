@@ -38,6 +38,7 @@ import {
   deleteCmsCourse,
   deleteCourseQuestion,
   deleteCourseResource,
+  getAreaLabel,
   getTrainingTrackingReport,
   getWorkerCourseDashboard,
   issueTrainingCertificate,
@@ -45,7 +46,10 @@ import {
   recordCoursePresentialAttendance,
   recordCourseWatchProgress,
   submitCourseExam,
+  syncWorkerCoursesByArea,
+  syncWorkersForArea,
   updateCmsCourse,
+  VALID_ACCESS_AREAS,
 } from '../services/courseCms.service.js';
 import {
   autofillCvFromPdf,
@@ -1057,6 +1061,56 @@ apiRouter.get('/reports/training', requireRole(['SSOMA']), async (req, res) => {
     res.json({ success: true, data: report });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/courses/sync-areas', requireRole(['SSOMA']), async (_req, res) => {
+  try {
+    const result = await syncWorkersForArea(null);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.patch('/workers/:workerId/area', requireRole(['SSOMA', 'ECM']), async (req, res) => {
+  try {
+    const workerId = String(req.params.workerId);
+    const accessZone = String(req.body?.accessZone || '').trim().toUpperCase();
+    if (!VALID_ACCESS_AREAS.includes(accessZone as any)) {
+      res.status(400).json({
+        success: false,
+        error: `Área de ingreso inválida. Valores permitidos: ${VALID_ACCESS_AREAS.join(', ')}.`,
+      });
+      return;
+    }
+
+    const updated = await prisma.worker.update({
+      where: { id: workerId },
+      data: { accessZone: accessZone as any },
+      include: { contractor: true },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        workerId,
+        actorArea: req.authUser?.role || 'SSOMA',
+        action: 'CAMBIO_AREA_INGRESO',
+        details: `Área de ingreso actualizada a ${getAreaLabel(accessZone as any)}. Cursos reasignados automáticamente.`,
+      },
+    });
+
+    const syncResult = await syncWorkerCoursesByArea(workerId);
+    res.json({
+      success: true,
+      data: {
+        worker: updated,
+        areaLabel: getAreaLabel(accessZone as any),
+        syncResult,
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 

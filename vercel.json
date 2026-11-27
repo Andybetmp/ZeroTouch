@@ -5,7 +5,7 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 30,
-      "includeFiles": "{packages/backend/dist/**,packages/backend/prisma/**,node_modules/.prisma/**,node_modules/@prisma/**}"
+      "includeFiles": "{packages/backend/dist/**,packages/backend/prisma/**,node_modules/.prisma/**,node_modules/@prisma/**,node_modules/pdf-parse/**}"
     }
   },
   "rewrites": [

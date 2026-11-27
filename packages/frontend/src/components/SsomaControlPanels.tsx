@@ -225,7 +225,7 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
       if (res.success) {
         onNotice(
           action === 'GRANT_GREEN' ? 'success' : 'error',
-          `Torre de Control: Pase QR ${action === 'GRANT_GREEN' ? 'EMITIDO' : 'REVOCADO'} para ${res.data.fullName}.`
+          `Torre de Control: Estado de Habilitación ${action === 'GRANT_GREEN' ? 'HABILITADO' : 'REVOCADO'} para ${res.data.fullName}.`
         );
         await onRefreshAll(workerId);
       } else {
@@ -490,7 +490,7 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
                 Torre de Control SSOMA — Avance Híbrido (32 Horas), RV Socavón y Biometría IA
               </h2>
               <p className="text-[11px] text-slate-300">
-                Supervisa el cumplimiento por día, valida asistencia presencial (Días 3-4) y emite o revoca el Pase QR.
+                Supervisa el cumplimiento por día, valida asistencia presencial y habilita o revoca el acceso del trabajador.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -515,7 +515,7 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
                   <th className="p-3 font-bold text-center">RV Socavón</th>
                   <th className="p-3 font-bold text-center">Alertas Bio</th>
                   <th className="p-3 font-bold text-center">Semáforo</th>
-                  <th className="p-3 font-bold text-right">Control Pase QR (SSOMA)</th>
+                  <th className="p-3 font-bold text-right">Estado Habilitación (SSOMA)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -579,13 +579,13 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
                           onClick={() => handleManualOverride(w.id, 'GRANT_GREEN')}
                           className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-[10px] cursor-pointer"
                         >
-                          Emitir QR
+                          Habilitar
                         </button>
                         <button
                           onClick={() => handleManualOverride(w.id, 'REVOKE_RED')}
                           className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded font-bold text-[10px] cursor-pointer"
                         >
-                          Revocar QR
+                          Revocar
                         </button>
                       </td>
                     </tr>
@@ -750,7 +750,7 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
             Sincronización Automática con Clínicas Ocupacionales (EMO) y Aseguradoras (SCTR / Vida Ley)
           </h2>
           <p className="text-slate-500">
-            Si un webhook reporta EMO <strong>NO_APTO</strong> o vencimiento de <strong>SCTR Salud / Pensión / Vida Ley</strong>, el sistema revoca automáticamente el Semáforo a 🔴 ROJO e invalida el Carné QR en Garita.
+            Si un webhook reporta EMO <strong>NO_APTO</strong> o vencimiento de <strong>SCTR Salud / Pensión / Vida Ley</strong>, el sistema revoca automáticamente el Semáforo a 🔴 ROJO y cambia el Estado de Habilitación a Pendiente / Bloqueado.
           </p>
         </div>
         <select
@@ -830,7 +830,7 @@ export const SsomaControlPanels: React.FC<SsomaPanelsProps> = ({
                 onClick={() => triggerInsurerWebhook('SCTR_PENSION', 'VENCIDA', true)}
                 className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 rounded font-bold cursor-pointer"
               >
-                🛡️ Simular Vencimiento SCTR Pensión (Revoca QR en Garita)
+                🛡️ Simular Vencimiento SCTR Pensión (Revoca Habilitación)
               </button>
               <button
                 disabled={loading}

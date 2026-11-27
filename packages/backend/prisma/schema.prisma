@@ -27,6 +27,8 @@ enum JobPosition {
 enum AccessZone {
   SUPERFICIE
   SOCAVON
+  PLANTA_CONCENTRADORA
+  OFICINAS_ADMINISTRATIVAS
 }
 
 enum ResponsibleArea {
@@ -195,6 +197,7 @@ model TrainingCourse {
   minPassScore  Int                      @default(75) @map("min_pass_score")
   maxAttempts   Int                      @default(3) @map("max_attempts")
   jobSpecialty  JobPosition?             @map("job_specialty")
+  targetArea    AccessZone?              @map("target_area") // null = Etapa 1 (Inducción General), valor = Etapa 2 (Específico del Área)
   orderIndex    Int                      @default(1) @map("order_index")
   isActive      Boolean                  @default(true) @map("is_active")
   createdAt     DateTime                 @default(now()) @map("created_at")

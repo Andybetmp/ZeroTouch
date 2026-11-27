@@ -1,12 +1,12 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import QRCode from 'qrcode';
 
 export interface CertificatePdfInput {
   workerName: string;
   workerDni: string;
   jobPosition: string;
   contractorName: string;
+  areaLabel?: string;
   verificationCode: string;
   issuedAt: string;
   issuedBy: string;
@@ -46,7 +46,7 @@ export async function downloadOfficialCertificatePdf(input: CertificatePdfInput)
   doc.setTextColor(30, 41, 59);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(15);
-  doc.text('CONSTANCIA OFICIAL DE CAPACITACION OBLIGATORIA (4 DIAS)', pageWidth / 2, 48, {
+  doc.text('CONSTANCIA OFICIAL DE CAPACITACION', pageWidth / 2, 48, {
     align: 'center',
   });
 
@@ -54,7 +54,7 @@ export async function downloadOfficialCertificatePdf(input: CertificatePdfInput)
   doc.setFontSize(10);
   doc.setTextColor(71, 85, 105);
   doc.text(
-    'Se certifica que el trabajador ha completado satisfactoriamente el programa de induccion y capacitacion:',
+    'Se certifica que el trabajador ha completado satisfactoriamente su malla de capacitacion obligatoria:',
     pageWidth / 2,
     56,
     { align: 'center' }
@@ -63,44 +63,44 @@ export async function downloadOfficialCertificatePdf(input: CertificatePdfInput)
   // Tarjeta de datos del trabajador
   doc.setDrawColor(203, 213, 225);
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(15, 62, pageWidth - 30, 36, 2, 2, 'FD');
+  doc.roundedRect(15, 62, pageWidth - 30, 42, 2, 2, 'FD');
 
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.text('Apellidos y Nombres:', 20, 71);
   doc.text('DNI / Documento:', 20, 79);
-  doc.text('Puesto / Especialidad:', 20, 87);
-  doc.text('Empresa Contratista (ECM):', 20, 95);
+  doc.text('Empresa Contratista:', 20, 87);
+  doc.text('Area de Ingreso / Puesto:', 20, 95);
 
   doc.setFont('helvetica', 'normal');
   doc.text(input.workerName, 72, 71);
   doc.text(input.workerDni, 72, 79);
-  doc.text(input.jobPosition, 72, 87);
-  doc.text(input.contractorName, 72, 95);
+  doc.text(input.contractorName, 72, 87);
+  doc.text(`${input.areaLabel || 'Unidad Minera'} (${input.jobPosition})`, 72, 95);
 
   // Resumen de horas y nota
   doc.setFillColor(236, 253, 245);
   doc.setDrawColor(167, 243, 208);
-  doc.roundedRect(15, 104, pageWidth - 30, 18, 2, 2, 'FD');
+  doc.roundedRect(15, 110, pageWidth - 30, 16, 2, 2, 'FD');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
   doc.setTextColor(6, 95, 70);
   doc.text(
-    `Total Horas: ${input.totalHours.toFixed(1)} h   |   Virtual (Dias 1-2): ${input.virtualHours.toFixed(1)} h   |   Presencial (Dias 3-4): ${input.presentialHours.toFixed(1)} h   |   Promedio: ${input.averageScore !== null ? `${input.averageScore}%` : 'Aprobado'}`,
+    `Total Horas: ${input.totalHours.toFixed(1)} h   |   E-learning: ${input.virtualHours.toFixed(1)} h   |   Presencial: ${input.presentialHours.toFixed(1)} h   |   Promedio: ${input.averageScore !== null ? `${input.averageScore}%` : 'Aprobado'}`,
     pageWidth / 2,
-    115,
+    120,
     { align: 'center' }
   );
 
-  // Tabla desglose por los 4 días
+  // Tabla desglose
   autoTable(doc, {
-    startY: 128,
-    head: [['Jornada', 'Programa / Descripcion', 'Modalidad', 'Horas', 'Estado']],
+    startY: 132,
+    head: [['Etapa / Jornada', 'Programa / Descripcion', 'Modalidad', 'Horas', 'Estado']],
     body: input.dayBreakdown.map((d) => [
       `Dia ${d.dayNumber}`,
       d.title,
-      d.modality,
+      d.modality === 'VIRTUAL' ? 'E-learning' : 'Presencial',
       `${d.hours.toFixed(1)} h`,
       d.status,
     ]),
@@ -110,36 +110,31 @@ export async function downloadOfficialCertificatePdf(input: CertificatePdfInput)
     margin: { left: 15, right: 15 },
   });
 
-  const finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 14 : 200;
+  const finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 16 : 205;
 
-  // Código QR de verificación
-  const qrPayload = JSON.stringify({
-    code: input.verificationCode,
-    dni: input.workerDni,
-    totalHours: input.totalHours,
-    issuedAt: input.issuedAt,
-  });
-  const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 160, margin: 1 });
-  doc.addImage(qrDataUrl, 'PNG', 15, finalY, 32, 32);
+  // Bloque de validación por código y DNI (sin QR)
+  doc.setDrawColor(203, 213, 225);
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(15, finalY, 102, 30, 2, 2, 'FD');
 
   doc.setTextColor(30, 41, 59);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9.5);
-  doc.text('VALIDACION DIGITAL ZERO-TOUCH', 53, finalY + 7);
+  doc.text('REGISTRO DE VALIDACION SSOMA', 20, finalY + 8);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(71, 85, 105);
-  doc.text(`Codigo de Verificacion: ${input.verificationCode}`, 53, finalY + 14);
-  doc.text(`Fecha de Emision: ${new Date(input.issuedAt).toLocaleString('es-PE')}`, 53, finalY + 20);
-  doc.text(`Emitido / Validado por: ${input.issuedBy}`, 53, finalY + 26);
+  doc.text(`Codigo de Constancia: ${input.verificationCode}`, 20, finalY + 15);
+  doc.text(`DNI Verificado: ${input.workerDni}`, 20, finalY + 21);
+  doc.text(`Fecha de Emision: ${new Date(input.issuedAt).toLocaleString('es-PE')}`, 20, finalY + 27);
 
   // Firma SSOMA
   doc.setDrawColor(100, 116, 139);
-  doc.line(130, finalY + 24, pageWidth - 15, finalY + 24);
+  doc.line(130, finalY + 22, pageWidth - 15, finalY + 22);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(30, 41, 59);
-  doc.text('Gerencia SSOMA - Minera Bateas', (130 + pageWidth - 15) / 2, finalY + 29, {
+  doc.text('Gerencia SSOMA - Minera Bateas', (130 + pageWidth - 15) / 2, finalY + 28, {
     align: 'center',
   });
 

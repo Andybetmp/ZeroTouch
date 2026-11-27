@@ -147,22 +147,34 @@ export async function extractDocumentContent(params: {
     };
   }
 
-  // Imagen (PNG / JPG / JPEG) -> Tesseract.js OCR
-  const worker = await createWorker('spa');
+  // Imagen (PNG / JPG / JPEG) -> Tesseract.js OCR (con cachePath seguro en /tmp para Serverless)
   try {
-    const ret = await worker.recognize(params.buffer);
-    const text = (ret.data.text || '').trim();
-    const confidence = typeof ret.data.confidence === 'number' ? ret.data.confidence : 75.0;
-    const { detectedDni, detectedExpiryDate } = extractStructuredMetadata(text);
+    const worker = await createWorker('spa', 1, {
+      ...(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? { cachePath: '/tmp' } : {}),
+    });
+    try {
+      const ret = await worker.recognize(params.buffer);
+      const text = (ret.data.text || '').trim();
+      const confidence = typeof ret.data.confidence === 'number' ? ret.data.confidence : 75.0;
+      const { detectedDni, detectedExpiryDate } = extractStructuredMetadata(text);
+      return {
+        extractedText: text,
+        extractionMethod: 'TESSERACT_OCR',
+        ocrConfidence: confidence,
+        detectedDni,
+        detectedExpiryDate,
+      };
+    } finally {
+      await worker.terminate();
+    }
+  } catch {
     return {
-      extractedText: text,
+      extractedText: '',
       extractionMethod: 'TESSERACT_OCR',
-      ocrConfidence: confidence,
-      detectedDni,
-      detectedExpiryDate,
+      ocrConfidence: 30.0,
+      detectedDni: null,
+      detectedExpiryDate: null,
     };
-  } finally {
-    await worker.terminate();
   }
 }
 
