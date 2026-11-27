@@ -1,50 +1,39 @@
-# Spec 05 — Especificación Frontend Web Corporativo React (App Bateas v2.1.0) y Carné Digital QR (SDD)
+# Spec 05 — Especificación Frontend Web Corporativo, Portal del Trabajador y Estado de Habilitación (SDD — v3.0)
 
-## 1. Arquitectura Visual Web Desktop (Look & Feel Oficial App Bateas v2.1.0)
+## 1. Arquitectura Visual y Separación de Interfaces (RBAC)
 
-El frontend en **React 19 + TypeScript + Tailwind CSS + Lucide Icons** es una **Aplicación Web Corporativa (Desktop-first)** que replica fielmente la interfaz real del **Sistema de Recursos Humanos — App Bateas v2.1.0** documentada en los Entregables 2 y 3:
+El frontend en **React 19 + TypeScript + Tailwind CSS v4 + Lucide Icons** ofrece dos experiencias completamente diferenciadas según el rol autenticado:
 
-1. **Barra Lateral Izquierda Fija (`#232d3b`)**:
-   - Cabecera con logo `App Bateas` y navegación jerárquica de módulos:
-     - `🏠 Inicio (Acceso directo / Panel de Control)`
-     - `📋 Afiliaciones` → `Afiliados y Carga OCR (ECM)`, `Bandeja de Excepciones (SSOMA/Médico/DHO)`, `Capacitaciones Web (E-Learning)`, `Documentos por estadía`, `Lista negra`
-     - `🛡️ Control de accesos` → `Carné Digital QR y Cola Fotocheck PVC (Garita)`
-2. **Barra Superior Blanca (`Top Header`)**:
-   - Enlaces `Inicio | Salir`, selector rápido de Rol de Simulación (`Administrador ECM / Contratista`, `Especialista SSOMA / Médico / DHO`, `Control Garita`) y perfil del usuario conectado.
-3. **Área de Trabajo Principal con Breadcrumbs**:
-   - Encabezado `Sistema de Recursos Humanos` o título del módulo con ruta de navegación (`Inicio / Afiliación / ...`).
+1. **Consola Administrativa (`SSOMA`, `ECM`, `GARITA`) — Layout App Bateas v2.1.0 (`#222d32`)**:
+   - Barra lateral izquierda fija con navegación a:
+     - `Inicio` (Acceso directo y Panel de Control KPIs AS-IS vs. TO-BE)
+     - `Afiliaciones` → `Afiliados (Motor OCR + Perfil CV Estructurado + Selector de Área)`, `Bandeja Excepciones Split-Screen`, `Inducciones E-Learning`, `Documentos por estadía`, `Lista negra`
+     - `Estado de Habilitación` (Consulta directa por DNI y Área de Ingreso, sin códigos QR)
+     - `Torre SSOMA` → `Torre Control / Bio`, `Gestión de Capacitaciones` (asociación automática por Área de Ingreso), `Seguimiento y Reportes` (Exportación Excel `.xlsx`, PDF Corporativo y Constancia PDF sin QR) e `Integraciones EMO/SCTR`.
+2. **Portal Aislado del Trabajador (`TRABAJADOR` → `/portal-trabajador`)**:
+   - Layout limpio **sin sidebar administrativo**, protegido con `ProtectedRoute` contra acceso directo a rutas de administración.
 
 ---
 
-## 2. Especificación de Módulos Web
+## 2. Cambios Clave de Diseño y UX (Versión 3.0)
 
-### 2.1. Módulo 1: Inicio — Acceso Directo y Panel de Control
-- **Pestaña "Acceso directo"** (Réplica de Entregable 3, Figura 2):
-  - Grid de tarjetas ilustradas con borde destacado para los módulos intervenidos por **Bateas Zero-Touch**:
-    - **Afiliación (Borde Verde Zero-Touch)**: *"Revise el estado de su afiliación, adjunte sus documentos para pre-validación OCR, revise el Semáforo Operativo."*
-    - **Capacitaciones E-Learning (Borde Índigo)**: *"Complete sus inducciones teóricas obligatorias 24/7 y rinda su evaluación web."*
-    - **Bandeja de Excepciones SSOMA/DHO (Borde Ámbar)**: *"Audite únicamente el ~20% de documentos observados o con incertidumbre OCR."*
-    - **Reservas de Viaje y Carné Digital QR (Borde Azul)**: *"Verifique su habilitación en Semáforo Verde, visualice su Carné Digital QR y orden de Fotocheck PVC."*
-- **Pestaña "Panel de control"** (Réplica de Entregable 2, Figura 2):
-  - Gráfico comparativo de Barras por Empresa Contratista (ECM) y Gráficos de Dona (**Situación Diagnóstico AS-IS: 3,152 vencidos / 87.9%** vs. **Situación Tiempo Real TO-BE en Supabase PostgreSQL**).
+### 2.1. Eliminación Total de Códigos QR → Tarjeta Simple "Estado de Habilitación"
+- Se eliminaron todos los componentes `QRCodeSVG`, botones de escaneo/descarga de QR y pantallas de "Pase de Garita QR" en el Portal del Trabajador, la vista de Control de Acceso (`garita@bateas.pe`), Afiliados, Torre de Control y Constancias PDF.
+- En su lugar se muestra una tarjeta clara de **Estado de Habilitación** (`Habilitado` en verde suave / `Pendiente` en ámbar suave) asociada directamente al **DNI del trabajador** y al **Área de Ingreso** asignada.
 
-### 2.2. Módulo 2: Afiliación, Carga OCR y Semáforo Operativo (Vista Web ECM)
-- **Layout Web de 2 Columnas (Master-Detail)**:
-  - Columna izquierda: Lista de trabajadores afiliados con filtro por Semáforo (`🟢 VERDE`, `🟡 ÁMBAR`, `🔴 ROJO`), buscador por DNI/Nombre, botón `+ Nuevo Afiliado` y barra de simulación rápida de los 4 casos OCR.
-  - Columna derecha: Ficha integral del expediente seleccionado, Semáforo Operativo, tabla de requisitos con las banderas `¿Es obligatorio?` y `¿Requiere vigencia?`, subida de PDF/Imagen con lectura OCR instantánea e historial de auditoría.
+### 2.2. Asignación Automática de Cursos por Área de Ingreso
+- **En Afiliados (`SSOMA` / `ECM`)**: Tanto el modal de registro de trabajador como la cabecera del expediente incluyen el selector **Área de Ingreso** (*Interior Mina / Socavón*, *Planta Concentradora*, *Superficie / Talleres*, *Oficinas Administrativas*). Al guardar o cambiar el área, se cargan automáticamente los cursos obligatorios correspondientes.
+- **En Gestión de Capacitaciones (`SSOMA`)**: Panel simplificado con tarjetas resumen por área y un selector de Área de Ingreso por curso (`Etapa 1: Inducción General` o un área específica de `Etapa 2`), con sincronización automática hacia los trabajadores.
+- **En Portal del Trabajador**: No existe ninguna pantalla ni botón de inscripción manual; el trabajador recibe su malla 100% asignada según su área.
 
-### 2.3. Módulo 3: Bandeja de Excepciones Split-Screen (SSOMA / Área Médica / DHO)
-- **Layout Web Split-Screen (Pantalla Dividida)**:
-  - Panel izquierdo: Cola de tickets `OPEN` en estado `ÁMBAR` filtrables por área (`SSOMA`, `AREA_MEDICA`, `DHO`, `AREA_USUARIA`).
-  - Panel derecho (Inspector Documental): Muestra lado a lado el **Visor del Documento / Texto Extraído por OCR** y el **Formulario de Dictamen Técnico**, permitiendo corregir manualmente la fecha de vencimiento y aprobar (`VERDE`) o rechazar (`ROJO`) sin reiniciar el resto del expediente.
-
-### 2.4. Módulo 4: Documentos por Estadía y Lista Negra (Maestros App Bateas v2.1.0)
-- **Tabla Maestra `Documentos por estadía`** (Réplica exacta de Entregable 3, Figura 3):
-  - Columnas `#`, `Tipo de Estadía`, `Descripción`, `Perfil`, `¿Es obligatorio?` (badge `Sí` verde / `No` ámbar), `¿Requiere vigencia?` (badge `Sí` verde / `No` ámbar), `Área Responsable` y botones de acción.
-- **Tabla `Lista negra`**:
-  - Buscador y formulario para registrar DNIs con restricción activa en unidad minera.
-
-### 2.5. Módulo 5: Aula Web E-Learning Asíncrona y Carné Digital QR / Garita PVC
-- **Aula Web E-Learning**: Vista web estructurada con módulos de *Seguridad General* y *Medio Ambiente* y examen de certificación en línea.
-- **Control de Garita y Carné Digital QR**: Vista web de tarjetas de credenciales habilitadas (`Semáforo VERDE`) con código QR verificable y gestión de cola de impresión de **Fotocheck físico en PVC**.
-
+### 2.3. Portal del Trabajador Limpio, Amigable y Ordenado (`WorkerPortal.tsx`)
+- **Encabezado resumido:** Tarjeta principal con nombre, DNI, empresa contratista, etiqueta de área asignada y barra de progreso simple (`"X de Y cursos completados"` + porcentaje), acompañada de la tarjeta **Estado de Habilitación** (sin QR).
+- **Organización en 2 bloques claros:**
+  - **Etapa 1: Inducción General**
+  - **Etapa 2: Capacitación Específica del Área**
+- **Tarjetas minimalistas:** Espaciado generoso (`gap-5`, `p-6`, `rounded-2xl`) mostrando únicamente:
+  1. Título del curso
+  2. Duración en horas (`Clock`)
+  3. Modalidad (`E-learning` o `Presencial`)
+  4. Etiqueta de estado en color suave (`Completado`, `En curso`, `Pendiente`)
+  5. Un único botón principal (`Iniciar` o `Continuar`) que abre el visor de contenido y evaluación en un modal enfocado.

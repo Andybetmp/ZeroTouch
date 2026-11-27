@@ -1,78 +1,55 @@
-# Spec 04 — Contratos de API REST y Servidor MCP (SDD)
+# Spec 04 — Contratos de API REST y Servidor MCP (SDD — v3.0)
 
 ## 1. Endpoints de la API REST (`/api/v1`)
 
-Todos los endpoints validan payloads con **Zod** y devuelven respuestas JSON estandarizadas `{ success: boolean, data?: T, error?: string }`.
+Todos los endpoints devuelven respuestas JSON estandarizadas `{ success: boolean, data?: T, error?: string }` y aplican middleware RBAC `requireRole(['SSOMA' | 'ECM' | 'GARITA' | 'TRABAJADOR'])`.
 
-### 1.1. Maestros y Dashboard KPI
-- `GET /api/v1/masters/requirements?stayType=PERMANENTE_CIA&jobPosition=CONDUCTOR`
-  - Lista los requisitos aplicables desde `stay_type_requirements`.
-- `GET /api/v1/masters/blacklist` / `POST /api/v1/masters/blacklist`
-  - Consulta o agrega DNIs en la Lista Negra para pruebas del jurado.
-- `GET /api/v1/dashboard/metrics`
-  - Retorna KPIs en tiempo real: total de trabajadores, conteo por Semáforo (`VERDE`, `AMBAR`, `ROJO`), tasa de automatización Zero-Touch (`% documentos aprobados sin humanos`), tickets abiertos en Bandeja de Excepciones y órdenes PVC en garita.
+### 1.1. Autenticación RBAC y Maestros
+- `POST /api/v1/auth/login` — Valida credenciales (`ssoma@bateas.pe`, `ecm@bateas.pe`, `garita@bateas.pe`, `trabajador@bateas.pe`), retorna token de sesión y rol estricto.
+- `GET /api/v1/masters/requirements` — Lista requisitos de `stay_type_requirements`.
+- `GET /api/v1/masters/blacklist` / `POST /api/v1/masters/blacklist` — Gestión de Lista Negra.
+- `GET /api/v1/dashboard/metrics` — KPIs en tiempo real (totales, Semáforo, tasa OCR Zero-Touch, alertas `< 20 días`).
 
-### 1.2. Trabajadores y Expedientes
+### 1.2. Trabajadores, Área de Ingreso y Perfil CV Estructurado
 - `POST /api/v1/workers`
-  - **Body**: `{ dni, fullName, contractorRuc, companyName, jobPosition, stayType, accessZone }`
-  - **Acción**: Cruza con `blacklist_entries`, crea al trabajador, genera los registros en `worker_documents` según `stay_type_requirements`, emite su `sessionCode` para E-Learning y retorna el expediente completo.
-- `POST /api/v1/workers/demo-preset`
-  - **Body**: `{ scenario: "ZERO_TOUCH_GREEN" | "EXCEPTION_AMBER" | "EXPIRED_RED" | "BLACKLISTED_RED" }`
-  - **Acción**: Genera instantáneamente un expediente con PDFs sintéticos procesados por el motor OCR real para demostrar cada escenario en vivo.
-- `GET /api/v1/workers` y `GET /api/v1/workers/:id`
-  - Retorna el trabajador con sus documentos, estado del Semáforo Operativo, tickets de excepción, intentos de E-Learning y Carné QR.
+  - **Body**: `{ dni, fullName, contractorRuc?, companyName, jobPosition, stayType, accessZone }`
+  - **Valores válidos de `accessZone`**: `SOCAVON` (*Interior Mina / Socavón*), `PLANTA_CONCENTRADORA` (*Planta Concentradora*), `SUPERFICIE` (*Superficie / Talleres*), `OFICINAS_ADMINISTRATIVAS` (*Oficinas Administrativas*).
+  - **Acción**: Cruza Lista Negra, crea checklist por estadía y **asigna automáticamente** los cursos obligatorios correspondientes al `accessZone` seleccionado (`syncWorkerCoursesByArea`).
+- `PATCH /api/v1/workers/:workerId/area` (`requireRole(['SSOMA', 'ECM'])`)
+  - **Body**: `{ accessZone }`
+  - **Acción**: Actualiza el Área de Ingreso del trabajador, registra auditoría y sincroniza automáticamente sus cursos obligatorios (mantiene Etapa 1 General y reemplaza Etapa 2 pendiente por la del área nueva).
+- `GET /api/v1/workers/:workerId/cv-profile` / `PUT /api/v1/workers/:workerId/cv-profile`
+  - Consulta o guarda las 6 secciones estructuradas del CV (Formación, Experiencia general, Experiencia minera, Especializaciones, Certificaciones, Cursos).
+- `POST /api/v1/workers/:workerId/cv-profile/pdf` — Adjunta/reemplaza PDF sin sobrescribir campos manuales.
+- `POST /api/v1/workers/:workerId/cv-profile/autofill` — Extrae y autocompleta las 6 secciones desde el PDF usando Google Gemini IA.
 
-### 1.3. Carga y Procesamiento OCR de Documentos
-- `POST /api/v1/workers/:workerId/documents/:requirementId/upload`
-  - **Multipart / Base64**: Recibe archivo PDF/PNG/JPG (`<= 5 MB`).
-  - **Acción Zero-Touch**: Ejecuta automáticamente `ocr.service` + `rules.service` + `trafficLight.service` en el mismo request (en `< 3 segundos`) y retorna el estado resultante (`VERDE`, `AMBAR` o `ROJO`).
+### 1.3. Carga OCR y Bandeja de Excepciones
+- `POST /api/v1/workers/:workerId/documents/:requirementId/upload` — Procesa PDF/imagen con OCR + Reglas (respetando candado Etapa 1 `DNI + CV` → Etapa 2).
+- `GET /api/v1/exceptions` / `PATCH /api/v1/exceptions/:exceptionId/resolve` — Bandeja Split-Screen de excepciones `ÁMBAR`.
+- `POST /api/v1/ai/audit-document/:workerDocumentId` / `POST /api/v1/ai/copilot` — Auditoría documental y Copiloto Google Gemini IA.
 
-### 1.4. Bandeja de Excepciones (SSOMA / Área Médica / DHO)
-- `GET /api/v1/exceptions?area=SSOMA&status=OPEN`
-  - Lista únicamente los documentos en estado `AMBAR` pendientes de revisión humana.
-- `PATCH /api/v1/exceptions/:exceptionId/resolve`
-  - **Body**: `{ decision: "APPROVED" | "REJECTED", reviewerName, reviewerComment, manualExpiryDate? }`
-  - **Acción**: Actualiza el documento a `VERDE` o `ROJO`, cierra el ticket de excepción, registra en `audit_logs` y recalcula el Semáforo Global (emitiendo el Carné QR si era el último requisito pendiente).
+### 1.4. Gestión de Capacitaciones por Área (CMS) y Portal del Trabajador
+- `GET /api/v1/courses` — Lista cursos con recursos, preguntas y resumen por Área de Ingreso (`areaSummary`).
+- `POST /api/v1/courses` / `PUT /api/v1/courses/:id` / `DELETE /api/v1/courses/:id` (`requireRole(['SSOMA'])`)
+  - Permite asociar `targetArea` (`null` = Etapa 1 Inducción General; `SOCAVON | PLANTA_CONCENTRADORA | SUPERFICIE | OFICINAS_ADMINISTRATIVAS` = Etapa 2 Específica del Área) y sincroniza automáticamente a los trabajadores impactados.
+- `POST /api/v1/courses/sync-areas` (`requireRole(['SSOMA'])`) — Re-sincroniza masivamente las asignaciones de todos los trabajadores según su Área de Ingreso.
+- `POST /api/v1/courses/:id/resources` / `POST /api/v1/courses/:id/questions` — Gestión de Videos, PDFs, Presentaciones y preguntas de opción múltiple.
+- `GET /api/v1/courses/worker/:workerId/dashboard` (`requireRole(['SSOMA', 'ECM', 'TRABAJADOR'])`)
+  - Sincroniza automáticamente cursos del área y retorna `workerInfo` (incluyendo `areaLabel` e `isEnabled`), `stage1Courses` (*Etapa 1: Inducción General*), `stage2Courses` (*Etapa 2: Capacitación Específica del Área*), `completedCount`, `totalCount`, `overallProgressPercent` y `certificate`.
+- `POST /api/v1/courses/worker/:workerId/watch` — Registra avance de visualización virtual.
+- `POST /api/v1/courses/worker/:workerId/exam` — Evalúa respuestas del curso respetando nota mínima e intentos máximos.
+- `POST /api/v1/courses/worker/:workerId/presential` (`requireRole(['SSOMA'])`) — Registra asistencia y nota presencial.
 
-### 1.5. Módulo E-Learning Asíncrono y Carné QR
-- `GET /api/v1/elearning/questions`
-  - Retorna 4 preguntas aleatorias del banco `quiz_questions`.
-- `POST /api/v1/elearning/submit`
-  - **Body**: `{ dni, sessionCode, answers: [{ questionId, selectedIndex }] }`
-  - **Acción**: Califica el intento, marca `elearningPassed = true` si `score >= 3/4` y recalcula el Semáforo Global.
-- `GET /api/v1/badges/verify/:badgeCode` y `PATCH /api/v1/badges/:badgeId/print-pvc`
-  - Verifica validez en garita y marca el fotocheck físico PVC como impreso.
+### 1.5. Control de Acceso por DNI (Sin QR), Reportes y Constancias
+- `GET /api/v1/badges/verify/:dni` — Consulta directa del **Estado de Habilitación** (`Habilitado` / `Pendiente` / `Bloqueado`) por DNI de 8 dígitos y Área de Ingreso.
+- `PATCH /api/v1/badges/:badgeId/print-pvc` — Actualiza estado de impresión del fotocheck físico PVC.
+- `GET /api/v1/reports/training` (`requireRole(['SSOMA'])`) — Matriz consolidada para reportes y exportación `.xlsx` / `.pdf`.
+- `POST /api/v1/certificates/worker/:workerId/issue` (`requireRole(['SSOMA'])`) — Emite Constancia Oficial con código textual de verificación (sin QR).
 
 ---
 
 ## 2. Contratos del Servidor MCP (`packages/backend/src/mcp/server.ts`)
 
-El servidor MCP se implementa con `@modelcontextprotocol/sdk` soportando tanto transporte **`stdio`** (para ejecución directa desde Antigravity / Claude Desktop) como **HTTP SSE (`/mcp/sse`)**.
-
-### 2.1. Tools Expuestas
-1. **`register_worker`**
-   - **Input Schema**: `{ dni: string, fullName: string, companyName: string, contractorRuc?: string, jobPosition: "OPERARIO"|"TECNICO"|"INGENIERO"|"CONDUCTOR"|"PERSONAL_COCINA", stayType?: "PERMANENTE_CIA", accessZone?: "SUPERFICIE"|"SOCAVON" }`
-   - **Output**: Estado inicial del Semáforo, alerta de Lista Negra y lista de documentos obligatorios generados.
-2. **`analyze_worker_document`**
-   - **Input Schema**: `{ workerDni: string, requirementCode: string, simulatedTextOrPdfBase64: string, isBase64File?: boolean }`
-   - **Output**: Texto extraído, DNI detectado, fecha de vencimiento detectada, estado asignado (`VERDE`/`AMBAR`/`ROJO`) y ticket de excepción creado si aplica.
-3. **`get_worker_traffic_light`**
-   - **Input Schema**: `{ dni: string }`
-   - **Output**: Resumen completo del Semáforo Operativo, desglose por documento, estado del E-Learning y datos del Carné Digital QR.
-4. **`list_exception_tray`**
-   - **Input Schema**: `{ assignedArea?: "SSOMA"|"AREA_MEDICA"|"DHO"|"AREA_USUARIA", status?: "OPEN"|"APPROVED"|"REJECTED" }`
-   - **Output**: Lista de tickets en la Bandeja de Excepciones que requieren intervención humana.
-5. **`resolve_exception_ticket`**
-   - **Input Schema**: `{ exceptionId: string, decision: "APPROVED"|"REJECTED", reviewerName: string, reviewerComment: string, manualExpiryDate?: string }`
-   - **Output**: Nuevo estado del documento, nuevo Semáforo Global del trabajador y confirmación de emisión de Carné QR si corresponde.
-6. **`complete_elearning_simulation`**
-   - **Input Schema**: `{ dni: string, scoreOutOfFour: number }`
-   - **Output**: Registro del intento E-Learning y actualización inmediata del Semáforo Global.
-7. **`verify_garita_qr`**
-   - **Input Schema**: `{ badgeCodeOrDni: string }`
-   - **Output**: Verificación en tiempo real para garita de seguridad (estado del Semáforo, vigencia mínima y estado de impresión del fotocheck físico en PVC).
-
-### 2.2. Resources Expuestos
-- `bateas://masters/requirements` → JSON con la matriz `Documentos por estadía` de App Bateas v2.1.0.
-- `bateas://masters/blacklist` → JSON con los registros activos de Lista Negra.
-- `bateas://metrics/summary` → JSON con los KPIs operativos en tiempo real.
+Soporta transporte **`stdio`**, **Streamable HTTP Stateless (`/api/mcp`)** y **SSE (`/mcp/sse`)**, exponiendo:
+- **8 Tools:** `register_worker`, `analyze_worker_document`, `get_worker_traffic_light`, `list_exception_tray`, `resolve_exception_ticket`, `complete_elearning_simulation`, `verify_garita_qr` (compatible con DNI), `generate_demo_scenario`.
+- **3 Resources:** `bateas://masters/requirements`, `bateas://masters/blacklist`, `bateas://metrics/summary`.
